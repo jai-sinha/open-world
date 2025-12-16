@@ -1,0 +1,32 @@
+{
+	"name": "open-world-strava",
+	"version": "0.1.0",
+	"description": "Client-side MapLibre exploration map for Strava activities",
+	"type": "module",
+	"scripts": {
+		"dev": "bun run --hot server/dev.ts",
+		"build": "bun run build.ts",
+		"preview": "bun run server/dev.ts --prod",
+		"type-check": "tsc --noEmit",
+		"check": "bun run scripts/check-setup.ts"
+	},
+	"dependencies": {
+		"maplibre-gl": "^4.1.2",
+		"@mapbox/polyline": "^1.2.1",
+		"idb": "^8.0.0"
+	},
+	"devDependencies": {
+		"@types/mapbox__polyline": "^1.0.5",
+		"bun-types": "latest",
+		"typescript": "^5.3.3"
+	},
+	"keywords": [
+		"strava",
+		"maplibre",
+		"exploration",
+		"geospatial",
+		"web-worker"
+	],
+	"author": "",
+	"license": "MIT"
+}

@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Strava Exploration Map</title>
+		<meta
+			name="description"
+			content="Visualize your Strava activities and explore where you've been"
+		/>
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+
+			:root {
+				--primary-color: #fc4c02;
+				--primary-hover: #e34402;
+				--success-color: #4caf50;
+				--warning-color: #ff9800;
+				--error-color: #f44336;
+				--text-primary: #333;
+				--text-secondary: #666;
+				--border-color: #ddd;
+				--bg-light: #f5f5f5;
+				--shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+				--shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.15);
+			}
+
+			body {
+				font-family:
+					-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+					Cantarell, sans-serif;
+				color: var(--text-primary);
+				overflow: hidden;
+			}
+
+			#app {
+				display: flex;
+				height: 100vh;
+				width: 100vw;
+			}
+
+			#map {
+				flex: 1;
+				position: relative;
+			}
+
+			#sidebar {
+				width: 360px;
+				background: white;
+				box-shadow: var(--shadow-lg);
+				overflow-y: auto;
+				display: flex;
+				flex-direction: column;
+				z-index: 10;
+			}
+
+			#header {
+				padding: 20px;
+				background: linear-gradient(135deg, var(--primary-color), var(--primary-hover));
+				color: white;
+			}
+
+			#header h1 {
+				font-size: 24px;
+				margin-bottom: 8px;
+				font-weight: 600;
+			}
+
+			#header p {
+				font-size: 14px;
+				opacity: 0.9;
+			}
+
+			#auth-section {
+				padding: 20px;
+				border-bottom: 1px solid var(--border-color);
+			}
+
+			#auth-button,
+			#fetch-button {
+				width: 100%;
+				padding: 12px 24px;
+				background: var(--primary-color);
+				color: white;
+				border: none;
+				border-radius: 6px;
+				font-size: 16px;
+				font-weight: 600;
+				cursor: pointer;
+				transition: background 0.2s;
+				margin-bottom: 10px;
+			}
+
+			#auth-button:hover,
+			#fetch-button:hover {
+				background: var(--primary-hover);
+			}
+
+			#fetch-button {
+				display: none;
+				background: var(--success-color);
+			}
+
+			#fetch-button:hover {
+				background: #45a049;
+			}
+
+			#user-info {
+				display: none;
+				margin-top: 10px;
+				padding: 10px;
+				background: var(--bg-light);
+				border-radius: 4px;
+				font-size: 14px;
+				text-align: center;
+			}
+
+			#controls {
+				flex: 1;
+				overflow-y: auto;
+			}
+
+			.exploration-controls {
+				padding: 20px;
+			}
+
+			.control-section {
+				margin-bottom: 24px;
+				padding: 16px;
+				background: white;
+				border: 1px solid var(--border-color);
+				border-radius: 8px;
+			}
+
+			.control-section h3 {
+				font-size: 16px;
+				margin-bottom: 12px;
+				color: var(--text-primary);
+				font-weight: 600;
+			}
+
+			.progress-section progress {
+				width: 100%;
+				height: 8px;
+				border: none;
+				border-radius: 4px;
+				overflow: hidden;
+				margin-bottom: 8px;
+			}
+
+			progress::-webkit-progress-bar {
+				background: var(--bg-light);
+				border-radius: 4px;
+			}
+
+			progress::-webkit-progress-value {
+				background: var(--success-color);
+				border-radius: 4px;
+			}
+
+			progress::-moz-progress-bar {
+				background: var(--success-color);
+				border-radius: 4px;
+			}
+
+			.progress-text {
+				font-size: 14px;
+				color: var(--text-secondary);
+			}
+
+			.buttons-section {
+				display: flex;
+				gap: 8px;
+			}
+
+			.btn {
+				flex: 1;
+				padding: 10px 16px;
+				border: none;
+				border-radius: 6px;
+				font-size: 14px;
+				font-weight: 600;
+				cursor: pointer;
+				transition: all 0.2s;
+			}
+
+			.btn:disabled {
+				opacity: 0.5;
+				cursor: not-allowed;
+			}
+
+			.btn-pause {
+				background: var(--warning-color);
+				color: white;
+			}
+
+			.btn-pause:hover:not(:disabled) {
+				background: #f57c00;
+			}
+
+			.btn-pause.paused {
+				background: var(--success-color);
+			}
+
+			.btn-cancel {
+				background: var(--error-color);
+				color: white;
+			}
+
+			.btn-cancel:hover:not(:disabled) {
+				background: #d32f2f;
+			}
+
+			.btn-clear {
+				background: var(--text-secondary);
+				color: white;
+			}
+
+			.btn-clear:hover {
+				background: #555;
+			}
+
+			.btn-export,
+			.btn-import {
+				background: var(--primary-color);
+				color: white;
+				margin-bottom: 8px;
+			}
+
+			.btn-export:hover,
+			.btn-import:hover {
+				background: var(--primary-hover);
+			}
+
+			.control-group {
+				margin-bottom: 12px;
+			}
+
+			.control-group label {
+				display: block;
+				font-size: 14px;
+				margin-bottom: 6px;
+				color: var(--text-secondary);
+			}
+
+			.checkbox-group {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+
+			.checkbox-group label {
+				margin: 0;
+				cursor: pointer;
+			}
+
+			.checkbox-group input[type="checkbox"] {
+				cursor: pointer;
+				width: 18px;
+				height: 18px;
+			}
+
+			.range-group {
+				display: grid;
+				grid-template-columns: 1fr auto;
+				gap: 8px;
+				align-items: center;
+			}
+
+			.range-group label {
+				grid-column: 1 / -1;
+			}
+
+			.range-group input[type="range"] {
+				width: 100%;
+			}
+
+			.value-display {
+				font-size: 14px;
+				font-weight: 600;
+				color: var(--text-primary);
+				min-width: 50px;
+				text-align: right;
+			}
+
+			input[type="range"] {
+				-webkit-appearance: none;
+				appearance: none;
+				height: 6px;
+				background: var(--bg-light);
+				outline: none;
+				border-radius: 3px;
+			}
+
+			input[type="range"]::-webkit-slider-thumb {
+				-webkit-appearance: none;
+				appearance: none;
+				width: 18px;
+				height: 18px;
+				background: var(--primary-color);
+				cursor: pointer;
+				border-radius: 50%;
+			}
+
+			input[type="range"]::-moz-range-thumb {
+				width: 18px;
+				height: 18px;
+				background: var(--primary-color);
+				cursor: pointer;
+				border-radius: 50%;
+				border: none;
+			}
+
+			.advanced-section {
+				transition: max-height 0.3s ease;
+			}
+
+			.advanced-section.collapsed .section-content {
+				display: none;
+			}
+
+			.route-section {
+				transition: max-height 0.3s ease;
+			}
+
+			.route-section.collapsed .section-content {
+				display: none;
+			}
+
+			.section-header {
+				cursor: pointer;
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				user-select: none;
+			}
+
+			.section-header:hover h3 {
+				color: var(--primary-color);
+			}
+
+			.toggle-icon {
+				transition: transform 0.3s;
+			}
+
+			.collapsed .toggle-icon {
+				transform: rotate(-90deg);
+			}
+
+			.stats-content {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+
+			.stat-item {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				padding: 8px;
+				background: var(--bg-light);
+				border-radius: 4px;
+			}
+
+			.stat-label {
+				font-size: 14px;
+				color: var(--text-secondary);
+			}
+
+			.stat-value {
+				font-size: 16px;
+				font-weight: 600;
+				color: var(--text-primary);
+			}
+
+			.message {
+				padding: 12px;
+				margin-bottom: 12px;
+				border-radius: 6px;
+				font-size: 14px;
+				animation: slideIn 0.3s ease;
+			}
+
+			@keyframes slideIn {
+				from {
+					transform: translateY(-10px);
+					opacity: 0;
+				}
+				to {
+					transform: translateY(0);
+					opacity: 1;
+				}
+			}
+
+			.message.fade-out {
+				animation: fadeOut 0.3s ease;
+				opacity: 0;
+			}
+
+			@keyframes fadeOut {
+				to {
+					opacity: 0;
+				}
+			}
+
+			.message-info {
+				background: #e3f2fd;
+				color: #1976d2;
+				border-left: 4px solid #1976d2;
+			}
+
+			.message-success {
+				background: #e8f5e9;
+				color: #388e3c;
+				border-left: 4px solid #388e3c;
+			}
+
+			.message-warning {
+				background: #fff3e0;
+				color: #f57c00;
+				border-left: 4px solid #f57c00;
+			}
+
+			.message-error {
+				background: #ffebee;
+				color: #d32f2f;
+				border-left: 4px solid #d32f2f;
+			}
+
+			.maplibregl-ctrl-attrib {
+				font-size: 11px;
+			}
+
+			/* Mobile responsive */
+			@media (max-width: 768px) {
+				#app {
+					flex-direction: column;
+				}
+
+				#sidebar {
+					width: 100%;
+					height: 50vh;
+					order: 2;
+				}
+
+				#map {
+					height: 50vh;
+					order: 1;
+				}
+			}
+
+			/* Loading spinner */
+			.spinner {
+				display: inline-block;
+				width: 16px;
+				height: 16px;
+				border: 2px solid rgba(255, 255, 255, 0.3);
+				border-radius: 50%;
+				border-top-color: white;
+				animation: spin 0.6s linear infinite;
+			}
+
+			@keyframes spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div id="app">
+			<div id="sidebar">
+				<div id="header">
+					<h1>🗺️ Strava Explorer</h1>
+					<p>Visualize your explored territories</p>
+				</div>
+
+				<div id="auth-section">
+					<button id="auth-button">Connect Strava</button>
+					<button id="fetch-button">Load Activities</button>
+					<div id="user-info"></div>
+				</div>
+
+				<div id="controls">
+					<!-- Controls will be dynamically inserted here -->
+				</div>
+			</div>
+
+			<div id="map"></div>
+		</div>
+
+		<script type="module" src="/src/main.ts"></script>
+	</body>
+</html>
