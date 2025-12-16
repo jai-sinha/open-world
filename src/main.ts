@@ -145,9 +145,8 @@ class ExplorationMapApp {
 		// Create route overlay layer
 		this.routeLayer = createRouteOverlay(this.map, {
 			lineColor: "#FF5722",
-			lineWidth: 2,
-			lineOpacity: 0.7,
-			colorByType: true,
+			lineWidth: 4,
+			lineOpacity: 1,
 			showPrivate: false,
 		});
 

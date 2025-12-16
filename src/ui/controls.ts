@@ -286,7 +286,7 @@ export class Controls {
 			"Line Width:",
 			1,
 			5,
-			2,
+			4,
 			0.5,
 			(value) => this.options.onRouteStyleChange?.({ lineWidth: value }),
 		);
@@ -298,20 +298,11 @@ export class Controls {
 			"Opacity:",
 			0,
 			1,
-			0.7,
+			1,
 			0.1,
 			(value) => this.options.onRouteStyleChange?.({ lineOpacity: value }),
 		);
 		content.appendChild(opacityControl);
-
-		// Color by type toggle
-		const colorByTypeToggle = this.createCheckbox(
-			"route-color-type",
-			"Color by Activity Type",
-			true,
-			(checked) => this.options.onRouteStyleChange?.({ colorByType: checked }),
-		);
-		content.appendChild(colorByTypeToggle);
 
 		section.appendChild(content);
 		return section;
