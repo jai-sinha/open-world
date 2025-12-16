@@ -7,8 +7,6 @@ import { ACTIVITY_COLORS } from "../lib/route-layer";
 export interface ControlsOptions {
 	onPrivacyChange?: (settings: PrivacySettings) => void;
 	onConfigChange?: (config: Partial<ProcessingConfig>) => void;
-	onExport?: () => void;
-	onImport?: (file: File) => void;
 	onRouteToggle?: (visible: boolean) => void;
 	onUnitsToggle?: (imperial: boolean) => void;
 	onRouteStyleChange?: (style: {
@@ -72,10 +70,6 @@ export class Controls {
 		// Stats display
 		const statsSection = this.createStatsSection();
 		this.container.appendChild(statsSection);
-
-		// Data management
-		const dataSection = this.createDataSection();
-		this.container.appendChild(dataSection);
 
 		// Apply initial processing state (hide progress section if not processing)
 		this.setProcessing(this.isProcessing);
@@ -397,31 +391,6 @@ export class Controls {
 	/**
 	 * Create data management section
 	 */
-	private createDataSection(): HTMLElement {
-		const section = document.createElement("div");
-		section.className = "control-section data-section";
-
-		const title = document.createElement("h3");
-		title.textContent = "Data Management";
-		section.appendChild(title);
-
-		// Export button
-		const exportButton = document.createElement("button");
-		exportButton.className = "btn btn-export";
-		exportButton.textContent = "Export Data";
-		exportButton.onclick = () => this.options.onExport?.();
-		section.appendChild(exportButton);
-
-		// Import button
-		const importButton = document.createElement("button");
-		importButton.className = "btn btn-import";
-		importButton.textContent = "Import Data";
-		importButton.onclick = () => this.handleImport();
-		section.appendChild(importButton);
-
-		return section;
-	}
-
 	/**
 	 * Helper: Create checkbox control
 	 */
@@ -579,19 +548,6 @@ export class Controls {
 	/**
 	 * Handle import
 	 */
-	private handleImport(): void {
-		const input = document.createElement("input");
-		input.type = "file";
-		input.accept = ".json";
-		input.onchange = () => {
-			const file = input.files?.[0];
-			if (file) {
-				this.options.onImport?.(file);
-			}
-		};
-		input.click();
-	}
-
 	/**
 	 * Update privacy settings
 	 */

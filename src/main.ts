@@ -180,8 +180,6 @@ class ExplorationMapApp {
 		this.controls = createControls(controlsContainer, {
 			onPrivacyChange: (settings) => this.updatePrivacySettings(settings),
 			onConfigChange: (config) => this.updateConfig(config),
-			onExport: () => this.exportData(),
-			onImport: (file) => this.importData(file),
 			onRouteToggle: (visible) => this.toggleRouteOverlay(visible),
 			onUnitsToggle: (imperial) => this.toggleUnits(imperial),
 			onRouteStyleChange: (style) => this.updateRouteStyle(style),
@@ -560,73 +558,6 @@ class ExplorationMapApp {
 	/**
 	 * Export data as JSON
 	 */
-	private async exportData(): Promise<void> {
-		try {
-			const data = {
-				version: 1,
-				visitedCells: Array.from(this.visitedCells),
-				processedActivityIds: Array.from(this.processedActivityIds),
-				config: this.currentConfig,
-				exportedAt: new Date().toISOString(),
-			};
-
-			const blob = new Blob([JSON.stringify(data, null, 2)], {
-				type: "application/json",
-			});
-
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = url;
-			a.download = `strava-exploration-${Date.now()}.json`;
-			a.click();
-
-			URL.revokeObjectURL(url);
-
-			this.controls?.showMessage("Data exported", "success");
-		} catch (error) {
-			console.error("Failed to export data:", error);
-			this.controls?.showMessage("Failed to export data", "error");
-		}
-	}
-
-	/**
-	 * Import data from JSON file
-	 */
-	private async importData(file: File): Promise<void> {
-		try {
-			const text = await file.text();
-			const data = JSON.parse(text);
-
-			if (!data.visitedCells || !data.processedActivityIds || !data.config) {
-				throw new Error("Invalid data format");
-			}
-
-			this.visitedCells = new Set(data.visitedCells);
-			this.processedActivityIds = new Set(data.processedActivityIds);
-			this.currentConfig = data.config;
-
-			// Update worker
-			this.sendWorkerMessage({
-				type: "init",
-				data: {
-					visitedCells: data.visitedCells,
-					processedActivityIds: data.processedActivityIds,
-					config: data.config,
-				},
-			});
-
-			// Trigger re-render
-			this.sendWorkerMessage({ type: "process", data: { activities: [] } });
-
-			// Save to IndexedDB
-			await this.saveCurrentState();
-
-			this.controls?.showMessage("Data imported successfully", "success");
-		} catch (error) {
-			console.error("Failed to import data:", error);
-			this.controls?.showMessage("Failed to import data", "error");
-		}
-	}
 
 	/**
 	 * Calculate explored area in km²
