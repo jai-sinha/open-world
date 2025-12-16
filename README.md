@@ -9,7 +9,7 @@ A client-side MapLibre-based exploration map that visualizes all your Strava act
 - **Fast & Lightweight**: Grid/bitset approach with rectangle merging for efficient rendering
 - **Smart Caching**: IndexedDB persistence means re-runs are instant
 - **Privacy Controls**: Remove/snap home locations, skip private activities
-- **Responsive UX**: Pause/resume/cancel processing, prioritize viewport activities
+- **Responsive UX**: Prioritize viewport activities
 - **Beautiful Visualization**: MapLibre GL canvas layer for smooth, high-performance rendering
 
 ## Grid/Bitset Algorithm

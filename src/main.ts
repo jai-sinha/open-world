@@ -6,7 +6,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import type { StravaActivity, ProcessingConfig, Rectangle } from "./types";
 import { createStravaClient, StravaClient } from "./lib/strava";
-import { loadState, saveState, clearState, getStorageStats } from "./lib/storage";
+import { loadState, saveState, getStorageStats } from "./lib/storage";
 import { createExplorationLayer, ExplorationCanvasLayer } from "./lib/canvas-layer";
 import { createRouteOverlay, RouteOverlayLayer } from "./lib/route-layer";
 import { createControls, Controls } from "./ui/controls";
@@ -52,7 +52,6 @@ class ExplorationMapApp {
 	private allActivities: StravaActivity[] = [];
 
 	private isProcessing = false;
-	private isPaused = false;
 
 	async initialize(): Promise<void> {
 		console.log("Initializing Exploration Map...");
@@ -60,16 +59,12 @@ class ExplorationMapApp {
 		// Fetch config from server and update clientId
 		await this.fetchConfig();
 
-		// Initialize Strava client with updated clientId
 		this.initializeStrava();
 
-		// Initialize map
 		await this.initializeMap();
 
-		// Initialize Web Worker
 		this.initializeWorker();
 
-		// Initialize UI controls
 		this.initializeControls();
 
 		// Try to load saved state
@@ -116,10 +111,8 @@ class ExplorationMapApp {
 			this.map!.on("load", () => resolve());
 		});
 
-		// Add navigation controls
+		// Add navigation and fullscreen controls
 		this.map.addControl(new maplibregl.NavigationControl(), "top-right");
-
-		// Add fullscreen control
 		this.map.addControl(new maplibregl.FullscreenControl(), "top-right");
 
 		// Add geolocate control
@@ -142,11 +135,11 @@ class ExplorationMapApp {
 			borderWidth: 0,
 		});
 
-		// Create route overlay layer
+		// route overlay layer
 		this.routeLayer = createRouteOverlay(this.map, {
 			lineColor: "#FF5722",
-			lineWidth: 4,
-			lineOpacity: 1,
+			lineWidth: 3.5,
+			lineOpacity: 0.9,
 			showPrivate: false,
 		});
 
@@ -185,10 +178,6 @@ class ExplorationMapApp {
 		}
 
 		this.controls = createControls(controlsContainer, {
-			onPause: () => this.pauseProcessing(),
-			onResume: () => this.resumeProcessing(),
-			onCancel: () => this.cancelProcessing(),
-			onClear: () => this.clearData(),
 			onPrivacyChange: (settings) => this.updatePrivacySettings(settings),
 			onConfigChange: (config) => this.updateConfig(config),
 			onExport: () => this.exportData(),
@@ -384,6 +373,8 @@ class ExplorationMapApp {
 			});
 
 			this.controls?.showMessage(`Fetched ${activities.length} activities`, "success");
+			// Hide the fetch-related progress UI now that fetching is done
+			this.controls?.showProgress(false);
 
 			// Store all activities for route overlay
 			this.allActivities = activities;
@@ -400,6 +391,8 @@ class ExplorationMapApp {
 			}
 
 			this.controls?.showMessage(`Processing ${newActivities.length} new activities...`, "info");
+			// Show the progress UI for worker processing
+			this.controls?.showProgress(true);
 
 			// Send to worker for processing
 			this.sendWorkerMessage({
@@ -469,14 +462,11 @@ class ExplorationMapApp {
 					this.explorationLayer.setRectangles(response.data.rectangles);
 				}
 
-				if (response.data?.cancelled) {
-					this.controls?.showMessage("Processing cancelled", "info");
-				} else {
-					this.controls?.showMessage("Processing complete!", "success");
+				this.controls?.showMessage("Processing complete!", "success");
 
-					// Final save
-					this.saveCurrentState();
-				}
+				// Final save
+				this.saveCurrentState();
+
 				break;
 
 			case "error":
@@ -492,50 +482,6 @@ class ExplorationMapApp {
 	 */
 	private sendWorkerMessage(message: WorkerMessage): void {
 		this.worker?.postMessage(message);
-	}
-
-	/**
-	 * Pause processing
-	 */
-	private pauseProcessing(): void {
-		this.isPaused = true;
-		this.sendWorkerMessage({ type: "pause" });
-	}
-
-	/**
-	 * Resume processing
-	 */
-	private resumeProcessing(): void {
-		this.isPaused = false;
-		this.sendWorkerMessage({ type: "resume" });
-	}
-
-	/**
-	 * Cancel processing
-	 */
-	private cancelProcessing(): void {
-		this.sendWorkerMessage({ type: "cancel" });
-	}
-
-	/**
-	 * Clear all data
-	 */
-	private async clearData(): Promise<void> {
-		try {
-			await clearState();
-			this.visitedCells.clear();
-			this.processedActivityIds.clear();
-			this.allActivities = [];
-
-			this.sendWorkerMessage({ type: "clear" });
-			this.explorationLayer?.clear();
-			this.routeLayer?.clear();
-
-			this.controls?.showMessage("Data cleared", "success");
-		} catch (error) {
-			console.error("Failed to clear data:", error);
-			this.controls?.showMessage("Failed to clear data", "error");
-		}
 	}
 
 	/**

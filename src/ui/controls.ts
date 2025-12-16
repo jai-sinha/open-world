@@ -4,10 +4,6 @@
 import type { ProcessingConfig, PrivacySettings } from "../types";
 
 export interface ControlsOptions {
-	onPause?: () => void;
-	onResume?: () => void;
-	onCancel?: () => void;
-	onClear?: () => void;
 	onPrivacyChange?: (settings: PrivacySettings) => void;
 	onConfigChange?: (config: Partial<ProcessingConfig>) => void;
 	onExport?: () => void;
@@ -23,14 +19,11 @@ export interface ControlsOptions {
 export class Controls {
 	private container: HTMLElement;
 	private options: ControlsOptions;
-	private isPaused = false;
 	private isProcessing = false;
 
 	private progressBar?: HTMLProgressElement;
 	private progressText?: HTMLElement;
-	private pauseButton?: HTMLButtonElement;
-	private cancelButton?: HTMLButtonElement;
-	private clearButton?: HTMLButtonElement;
+	private progressSection?: HTMLElement;
 	private statsContainer?: HTMLElement;
 
 	constructor(container: HTMLElement, options: ControlsOptions = {}) {
@@ -50,9 +43,7 @@ export class Controls {
 		const progressSection = this.createProgressSection();
 		this.container.appendChild(progressSection);
 
-		// Control buttons
-		const controlSection = this.createControlSection();
-		this.container.appendChild(controlSection);
+		// Control buttons removed (pause/cancel removed; Clear Data functionality removed from UI)
 
 		// Privacy settings
 		const privacySection = this.createPrivacySection();
@@ -73,6 +64,9 @@ export class Controls {
 		// Data management
 		const dataSection = this.createDataSection();
 		this.container.appendChild(dataSection);
+
+		// Apply initial processing state (hide progress section if not processing)
+		this.setProcessing(this.isProcessing);
 	}
 
 	/**
@@ -98,39 +92,84 @@ export class Controls {
 		this.progressText.textContent = "Ready";
 		section.appendChild(this.progressText);
 
+		this.progressSection = section;
+		if (!this.isProcessing) {
+			this.progressSection.style.display = "none";
+		}
+
 		return section;
 	}
 
 	/**
-	 * Create control buttons section
+	 * Show or hide the progress section without touching processing state or buttons
 	 */
-	private createControlSection(): HTMLElement {
+	showProgress(visible: boolean): void {
+		if (!this.progressSection) return;
+
+		this.progressSection.style.display = visible ? "" : "none";
+
+		if (!visible) {
+			if (this.progressBar) this.progressBar.value = 0;
+			if (this.progressText) this.progressText.textContent = "Ready";
+		}
+	}
+
+	/**
+	 * Create route overlay section
+	 */
+	private createRouteSection(): HTMLElement {
 		const section = document.createElement("div");
-		section.className = "control-section buttons-section";
+		section.className = "control-section route-section collapsed";
 
-		// Pause/Resume button
-		this.pauseButton = document.createElement("button");
-		this.pauseButton.className = "btn btn-pause";
-		this.pauseButton.textContent = "Pause";
-		this.pauseButton.disabled = true;
-		this.pauseButton.onclick = () => this.togglePause();
-		section.appendChild(this.pauseButton);
+		const header = document.createElement("div");
+		header.className = "section-header";
+		header.onclick = () => section.classList.toggle("collapsed");
 
-		// Cancel button
-		this.cancelButton = document.createElement("button");
-		this.cancelButton.className = "btn btn-cancel";
-		this.cancelButton.textContent = "Cancel";
-		this.cancelButton.disabled = true;
-		this.cancelButton.onclick = () => this.handleCancel();
-		section.appendChild(this.cancelButton);
+		const title = document.createElement("h3");
+		title.textContent = "Route Overlay";
+		header.appendChild(title);
 
-		// Clear button
-		this.clearButton = document.createElement("button");
-		this.clearButton.className = "btn btn-clear";
-		this.clearButton.textContent = "Clear Data";
-		this.clearButton.onclick = () => this.handleClear();
-		section.appendChild(this.clearButton);
+		const toggle = document.createElement("span");
+		toggle.className = "toggle-icon";
+		toggle.textContent = "▼";
+		header.appendChild(toggle);
 
+		section.appendChild(header);
+
+		const content = document.createElement("div");
+		content.className = "section-content";
+
+		// Toggle visibility
+		const visibilityToggle = this.createCheckbox("route-visible", "Show Routes", true, (checked) =>
+			this.options.onRouteToggle?.(checked),
+		);
+		content.appendChild(visibilityToggle);
+
+		// Line width control
+		const widthControl = this.createRangeControl(
+			"route-width",
+			"Line Width:",
+			1,
+			5,
+			3.5,
+			0.5,
+			(value) => this.options.onRouteStyleChange?.({ lineWidth: value }),
+		);
+		content.appendChild(widthControl);
+
+		// Line opacity control
+		const opacityControl = this.createRangeControl(
+			"route-opacity",
+			"Opacity:",
+			0,
+			1,
+			0.9,
+			0.1,
+			(value) => this.options.onRouteStyleChange?.({ lineOpacity: value }),
+		);
+		content.appendChild(opacityControl);
+
+		section.appendChild(content);
 		return section;
 	}
 
@@ -244,65 +283,6 @@ export class Controls {
 			(value) => this.updateConfig({ samplingStep: value }),
 		);
 		content.appendChild(samplingControl);
-
-		section.appendChild(content);
-		return section;
-	}
-
-	/**
-	 * Create route overlay section
-	 */
-	private createRouteSection(): HTMLElement {
-		const section = document.createElement("div");
-		section.className = "control-section route-section collapsed";
-
-		const header = document.createElement("div");
-		header.className = "section-header";
-		header.onclick = () => section.classList.toggle("collapsed");
-
-		const title = document.createElement("h3");
-		title.textContent = "Route Overlay";
-		header.appendChild(title);
-
-		const toggle = document.createElement("span");
-		toggle.className = "toggle-icon";
-		toggle.textContent = "▼";
-		header.appendChild(toggle);
-
-		section.appendChild(header);
-
-		const content = document.createElement("div");
-		content.className = "section-content";
-
-		// Toggle visibility
-		const visibilityToggle = this.createCheckbox("route-visible", "Show Routes", true, (checked) =>
-			this.options.onRouteToggle?.(checked),
-		);
-		content.appendChild(visibilityToggle);
-
-		// Line width control
-		const widthControl = this.createRangeControl(
-			"route-width",
-			"Line Width:",
-			1,
-			5,
-			4,
-			0.5,
-			(value) => this.options.onRouteStyleChange?.({ lineWidth: value }),
-		);
-		content.appendChild(widthControl);
-
-		// Line opacity control
-		const opacityControl = this.createRangeControl(
-			"route-opacity",
-			"Opacity:",
-			0,
-			1,
-			1,
-			0.1,
-			(value) => this.options.onRouteStyleChange?.({ lineOpacity: value }),
-		);
-		content.appendChild(opacityControl);
 
 		section.appendChild(content);
 		return section;
@@ -496,57 +476,27 @@ export class Controls {
 	setProcessing(processing: boolean): void {
 		this.isProcessing = processing;
 
-		if (this.pauseButton) {
-			this.pauseButton.disabled = !processing;
+		// Show/hide progress section based on processing state
+		if (this.progressSection) {
+			this.progressSection.style.display = processing ? "" : "none";
 		}
 
-		if (this.cancelButton) {
-			this.cancelButton.disabled = !processing;
-		}
-	}
-
-	/**
-	 * Toggle pause state
-	 */
-	private togglePause(): void {
-		this.isPaused = !this.isPaused;
-
-		if (this.pauseButton) {
-			this.pauseButton.textContent = this.isPaused ? "Resume" : "Pause";
-			this.pauseButton.classList.toggle("paused", this.isPaused);
-		}
-
-		if (this.isPaused) {
-			this.options.onPause?.();
-		} else {
-			this.options.onResume?.();
-		}
-	}
-
-	/**
-	 * Handle cancel
-	 */
-	private handleCancel(): void {
-		if (confirm("Are you sure you want to cancel processing?")) {
-			this.options.onCancel?.();
-			this.setProcessing(false);
-			this.isPaused = false;
-			if (this.pauseButton) {
-				this.pauseButton.textContent = "Pause";
+		// Reset progress display when processing stops
+		if (!processing) {
+			if (this.progressBar) {
+				this.progressBar.value = 0;
+			}
+			if (this.progressText) {
+				this.progressText.textContent = "Ready";
 			}
 		}
 	}
 
-	/**
-	 * Handle clear data
-	 */
-	private handleClear(): void {
-		if (confirm("Are you sure you want to clear all exploration data?")) {
-			this.options.onClear?.();
-			this.updateStats({ cells: 0, activities: 0, rectangles: 0, area: 0 });
-			this.updateProgress(0, 0, "Cleared");
-		}
-	}
+	// Pause/resume functionality removed
+
+	// Cancel handler removed (UI no longer exposes cancel button)
+
+	// Clear handled at top-level auth area now
 
 	/**
 	 * Handle import

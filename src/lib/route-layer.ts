@@ -34,8 +34,8 @@ export class RouteOverlayLayer {
 		this.map = map;
 		this.options = {
 			lineColor: "#FF5722",
-			lineWidth: 4,
-			lineOpacity: 1,
+			lineWidth: 3.5,
+			lineOpacity: 0.9,
 			showPrivate: false,
 			...options,
 		};
