@@ -9,6 +9,7 @@ export interface RouteLayerOptions {
 	lineWidth?: number;
 	lineOpacity?: number;
 	showPrivate?: boolean;
+	imperialUnits?: boolean;
 }
 
 export const ACTIVITY_COLORS: Record<string, string> = {
@@ -38,6 +39,7 @@ export class RouteOverlayLayer {
 			lineWidth: 3.5,
 			lineOpacity: 0.9,
 			showPrivate: false,
+			imperialUnits: false,
 			...options,
 		};
 		this.initialize();
@@ -114,13 +116,13 @@ export class RouteOverlayLayer {
 				.map((f) => {
 					const p = f.properties!;
 					return `
-						<div style="padding: 4px 0; border-bottom: 1px solid #eee;">
-							<div style="font-weight: 600;">${p.name}</div>
-							<div style="color: #666;">
-								${p.type} · ${(p.distance / 1000).toFixed(2)} km · ${new Date(p.date).toLocaleDateString()}
-							</div>
-						</div>
-					`;
+								<div style="padding: 4px 0; border-bottom: 1px solid #eee;">
+									<div style="font-weight: 600;">${p.name}</div>
+									<div style="color: #666;">
+										${p.type} · ${this.options.imperialUnits ? (p.distance / 1609.344).toFixed(2) + " mi" : (p.distance / 1000).toFixed(2) + " km"} · ${new Date(p.date).toLocaleDateString()}
+									</div>
+								</div>
+							`;
 				})
 				.join("");
 		}
@@ -197,13 +199,20 @@ export class RouteOverlayLayer {
 		this.updateSource(this.activities.filter((a) => types.includes(a.type)));
 	}
 
-	toggleVisibility(): void {
-		this.setVisibility(!this.visible);
-	}
-
 	setVisibility(visible: boolean): void {
 		this.visible = visible;
 		this.map.setLayoutProperty(this.layerId, "visibility", visible ? "visible" : "none");
+	}
+
+	setUnits(imperial: boolean): void {
+		this.options.imperialUnits = imperial;
+	}
+
+	/**
+	 * Return whether the layer is configured to use imperial units
+	 */
+	isImperialUnits(): boolean {
+		return this.options.imperialUnits;
 	}
 
 	isVisible(): boolean {

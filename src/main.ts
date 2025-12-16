@@ -183,8 +183,12 @@ class ExplorationMapApp {
 			onExport: () => this.exportData(),
 			onImport: (file) => this.importData(file),
 			onRouteToggle: (visible) => this.toggleRouteOverlay(visible),
+			onUnitsToggle: (imperial) => this.toggleUnits(imperial),
 			onRouteStyleChange: (style) => this.updateRouteStyle(style),
 		});
+
+		// Ensure controls reflect current units setting from the route layer
+		this.controls?.setUnits(this.routeLayer?.isImperialUnits?.() ?? false);
 
 		// Update auth button
 		this.updateAuthUI();
@@ -335,6 +339,15 @@ class ExplorationMapApp {
 	 */
 	private toggleRouteOverlay(visible: boolean): void {
 		this.routeLayer?.setVisibility(visible);
+	}
+
+	/**
+	 * Toggle units between metric and imperial
+	 */
+	private toggleUnits(imperial: boolean): void {
+		// Update controls UI (labels/formatting) and the route layer's unit handling
+		this.controls?.setUnits(imperial);
+		this.routeLayer?.setUnits(imperial);
 	}
 
 	/**

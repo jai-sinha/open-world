@@ -10,6 +10,7 @@ export interface ControlsOptions {
 	onExport?: () => void;
 	onImport?: (file: File) => void;
 	onRouteToggle?: (visible: boolean) => void;
+	onUnitsToggle?: (imperial: boolean) => void;
 	onRouteStyleChange?: (style: {
 		lineWidth?: number;
 		lineOpacity?: number;
@@ -28,6 +29,14 @@ export class Controls {
 	private statsContainer?: HTMLElement;
 	private routeLegendContainer?: HTMLElement;
 	private routeLegendList?: HTMLElement;
+
+	// Unit-related state and references for updating displayed units
+	private imperialUnits = false;
+	private privacyDistanceInput?: HTMLInputElement;
+	private privacyDistanceValueEl?: HTMLElement;
+	private privacyDistanceLabelEl?: HTMLLabelElement;
+	private areaStatEl: HTMLElement | null = null;
+	private lastAreaKm2 = 0;
 
 	constructor(container: HTMLElement, options: ControlsOptions = {}) {
 		this.container = container;
@@ -142,15 +151,17 @@ export class Controls {
 		const content = document.createElement("div");
 		content.className = "section-content";
 
-		// Toggle visibility
+		const togglesRow = document.createElement("div");
+		togglesRow.style.display = "flex";
+		togglesRow.style.gap = "1em";
+		togglesRow.style.alignItems = "center";
+
 		const visibilityToggle = this.createCheckbox(
 			"route-visible",
 			"Show Routes",
 			true,
 			(checked) => {
 				this.options.onRouteToggle?.(checked);
-				// Hide/show the legend to match route visibility. If enabling routes, only show
-				// the legend when it actually contains items.
 				if (this.routeLegendContainer) {
 					if (checked) {
 						this.routeLegendContainer.style.display =
@@ -161,9 +172,15 @@ export class Controls {
 				}
 			},
 		);
-		content.appendChild(visibilityToggle);
+		togglesRow.appendChild(visibilityToggle);
 
-		// Line width control
+		const unitsToggle = this.createCheckbox("route-imperial", "Imperial Units", false, (checked) =>
+			this.options.onUnitsToggle?.(checked),
+		);
+		togglesRow.appendChild(unitsToggle);
+
+		content.appendChild(togglesRow);
+
 		const widthControl = this.createRangeControl(
 			"route-width",
 			"Line Width:",
@@ -175,7 +192,6 @@ export class Controls {
 		);
 		content.appendChild(widthControl);
 
-		// Line opacity control
 		const opacityControl = this.createRangeControl(
 			"route-opacity",
 			"Opacity:",
@@ -242,6 +258,7 @@ export class Controls {
 		distanceLabel.textContent = "Remove Distance (m):";
 		distanceLabel.htmlFor = "privacy-distance";
 		distanceControl.appendChild(distanceLabel);
+		this.privacyDistanceLabelEl = distanceLabel;
 
 		const distanceInput = document.createElement("input");
 		distanceInput.type = "range";
@@ -250,13 +267,22 @@ export class Controls {
 		distanceInput.max = "500";
 		distanceInput.value = "100";
 		distanceInput.step = "25";
+		this.privacyDistanceInput = distanceInput;
 
 		const distanceValue = document.createElement("span");
 		distanceValue.className = "value-display";
 		distanceValue.textContent = "100m";
+		this.privacyDistanceValueEl = distanceValue;
 
 		distanceInput.oninput = () => {
-			distanceValue.textContent = `${distanceInput.value}m`;
+			// Display converted units if necessary, but keep underlying value in meters
+			if (this.imperialUnits) {
+				const meters = parseInt(distanceInput.value, 10);
+				const feet = Math.round(meters * 3.280839895);
+				distanceValue.textContent = `${feet}ft`;
+			} else {
+				distanceValue.textContent = `${distanceInput.value}m`;
+			}
 			this.updatePrivacy({ removeDistance: parseInt(distanceInput.value) });
 		};
 
@@ -361,6 +387,9 @@ export class Controls {
       </div>
     `;
 		section.appendChild(this.statsContainer);
+
+		// Keep a reference to the area element so we can update unit formatting
+		this.areaStatEl = this.statsContainer.querySelector("#stat-area") as HTMLElement | null;
 
 		return section;
 	}
@@ -506,8 +535,16 @@ export class Controls {
 		}
 
 		if (stats.area !== undefined) {
-			const el = this.statsContainer.querySelector("#stat-area");
-			if (el) el.textContent = `${stats.area.toFixed(2)} km²`;
+			this.lastAreaKm2 = stats.area; // store for unit toggling
+			if (this.areaStatEl) {
+				if (this.imperialUnits) {
+					// convert km² to mi²
+					const areaMi = stats.area * 0.3861021585;
+					this.areaStatEl.textContent = `${areaMi.toFixed(2)} mi²`;
+				} else {
+					this.areaStatEl.textContent = `${stats.area.toFixed(2)} km²`;
+				}
+			}
 		}
 	}
 
@@ -573,6 +610,41 @@ export class Controls {
 	 */
 	private updateConfig(partial: Partial<ProcessingConfig>): void {
 		this.options.onConfigChange?.(partial);
+	}
+
+	/**
+	 * Toggle units and update displayed units
+	 */
+	setUnits(imperial: boolean): void {
+		this.imperialUnits = imperial;
+
+		// Update units checkbox state if present
+		const checkbox = document.getElementById("route-imperial") as HTMLInputElement | null;
+		if (checkbox) checkbox.checked = imperial;
+
+		// Update privacy label and value display
+		if (this.privacyDistanceLabelEl) {
+			this.privacyDistanceLabelEl.textContent = `Remove Distance (${imperial ? "ft" : "m"}):`;
+		}
+		if (this.privacyDistanceInput && this.privacyDistanceValueEl) {
+			const meters = parseInt(this.privacyDistanceInput.value, 10) || 0;
+			if (imperial) {
+				const feet = Math.round(meters * 3.280839895);
+				this.privacyDistanceValueEl.textContent = `${feet}ft`;
+			} else {
+				this.privacyDistanceValueEl.textContent = `${meters}m`;
+			}
+		}
+
+		// Update area display based on last known area
+		if (this.areaStatEl) {
+			if (imperial) {
+				const areaMi = this.lastAreaKm2 * 0.3861021585;
+				this.areaStatEl.textContent = `${areaMi.toFixed(2)} mi²`;
+			} else {
+				this.areaStatEl.textContent = `${this.lastAreaKm2.toFixed(2)} km²`;
+			}
+		}
 	}
 
 	/**
