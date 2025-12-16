@@ -41,6 +41,7 @@ export async function saveState(
 	visitedCells: Set<string>,
 	processedActivityIds: Set<number>,
 	config: ProcessingConfig,
+	activities: any[] = [],
 ): Promise<void> {
 	try {
 		const db = await getDB();
@@ -49,8 +50,16 @@ export async function saveState(
 			visitedCells: Array.from(visitedCells),
 			processedActivityIds: Array.from(processedActivityIds),
 			config,
+			activities,
 			lastSync: Date.now(),
 		};
+
+		console.log("Storage.saveState - activities being saved:", {
+			count: activities.length,
+			withPolylines: activities.filter((a: any) => a.map?.summary_polyline || a.map?.polyline)
+				.length,
+			firstActivityMap: activities[0]?.map,
+		});
 
 		await db.put(STORE_NAME, state, "current");
 	} catch (error) {
@@ -66,6 +75,7 @@ export async function loadState(): Promise<{
 	visitedCells: Set<string>;
 	processedActivityIds: Set<number>;
 	config: ProcessingConfig;
+	activities: any[];
 	lastSync: number;
 } | null> {
 	try {
@@ -83,10 +93,19 @@ export async function loadState(): Promise<{
 			return null;
 		}
 
+		const activities = state.activities || [];
+		console.log("Storage.loadState - activities being loaded:", {
+			count: activities.length,
+			withPolylines: activities.filter((a: any) => a.map?.summary_polyline || a.map?.polyline)
+				.length,
+			firstActivityMap: activities[0]?.map,
+		});
+
 		return {
 			visitedCells: new Set(state.visitedCells),
 			processedActivityIds: new Set(state.processedActivityIds),
 			config: state.config,
+			activities,
 			lastSync: state.lastSync,
 		};
 	} catch (error) {
@@ -163,19 +182,25 @@ export async function getStorageStats(): Promise<{
 export async function mergeCells(
 	newCells: Set<string>,
 	newActivityIds: Set<number>,
+	activities: any[] = [],
 ): Promise<void> {
 	try {
 		const existing = await loadState();
 
 		if (!existing) {
 			// No existing state, create new
-			await saveState(newCells, newActivityIds, {
-				cellSize: 25,
-				samplingStep: 12.5,
-				privacyDistance: 100,
-				snapToGrid: false,
-				skipPrivate: false,
-			});
+			await saveState(
+				newCells,
+				newActivityIds,
+				{
+					cellSize: 25,
+					samplingStep: 12.5,
+					privacyDistance: 100,
+					snapToGrid: false,
+					skipPrivate: false,
+				},
+				activities,
+			);
 			return;
 		}
 
@@ -183,7 +208,12 @@ export async function mergeCells(
 		const mergedCells = new Set([...existing.visitedCells, ...newCells]);
 		const mergedIds = new Set([...existing.processedActivityIds, ...newActivityIds]);
 
-		await saveState(mergedCells, mergedIds, existing.config);
+		await saveState(
+			mergedCells,
+			mergedIds,
+			existing.config,
+			activities.length > 0 ? activities : existing.activities,
+		);
 	} catch (error) {
 		console.error("Failed to merge cells:", error);
 		throw error;

@@ -114,6 +114,7 @@ export interface StoredState {
 	visitedCells: string[];
 	processedActivityIds: number[];
 	config: ProcessingConfig;
+	activities: StravaActivity[];
 	lastSync: number;
 }
 

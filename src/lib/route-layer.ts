@@ -165,22 +165,67 @@ export class RouteOverlayLayer {
 	}
 
 	private updateSource(activities: StravaActivity[]): void {
-		const features = activities
-			.filter(
-				(a) =>
-					(this.options.showPrivate || !a.private) && (a.map?.summary_polyline || a.map?.polyline),
-			)
-			.map((a) => this.activityToFeature(a))
-			.filter(Boolean);
+		const filtered = activities.filter(
+			(a) =>
+				(this.options.showPrivate || !a.private) && (a.map?.summary_polyline || a.map?.polyline),
+		);
 
-		(this.map.getSource(this.sourceId) as GeoJSONSource)?.setData({
+		console.log("Route layer updateSource:", {
+			totalActivities: activities.length,
+			activitiesWithPolylines: filtered.length,
+			showPrivate: this.options.showPrivate,
+			activitiesChecked: activities.slice(0, 3).map((a) => ({
+				name: a.name,
+				hasPolyline: !!(a.map?.summary_polyline || a.map?.polyline),
+				private: a.private,
+			})),
+		});
+
+		const features = filtered.map((a) => this.activityToFeature(a)).filter(Boolean);
+
+		console.log(
+			"Route layer updateSource: created",
+			features.length,
+			"features from",
+			filtered.length,
+			"filtered activities",
+		);
+
+		const source = this.map.getSource(this.sourceId) as GeoJSONSource;
+		if (!source) {
+			console.error("Route layer source not found:", this.sourceId);
+			return;
+		}
+
+		source.setData({
 			type: "FeatureCollection",
 			features: features as any,
 		});
+
+		console.log("Route layer source updated with", features.length, "features");
 	}
 
 	setActivities(activities: StravaActivity[]): void {
 		this.activities = activities;
+		console.log("Route layer setActivities called with", activities.length, "activities");
+
+		const activitiesWithPolylines = activities.filter(
+			(a) => a.map?.summary_polyline || a.map?.polyline,
+		);
+		console.log("Activities with polylines:", activitiesWithPolylines.length);
+
+		if (activities.length > 0) {
+			console.log("First activity details:", {
+				name: activities[0].name,
+				type: activities[0].type,
+				private: activities[0].private,
+				hasMap: !!activities[0].map,
+				hasSummaryPolyline: !!activities[0].map?.summary_polyline,
+				hasPolyline: !!activities[0].map?.polyline,
+				mapKeys: activities[0].map ? Object.keys(activities[0].map) : [],
+			});
+		}
+
 		this.updateSource(this.activities);
 	}
 

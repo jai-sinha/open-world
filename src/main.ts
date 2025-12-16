@@ -188,6 +188,9 @@ class ExplorationMapApp {
 		// Ensure controls reflect current units setting from the route layer
 		this.controls?.setUnits(this.routeLayer?.isImperialUnits?.() ?? false);
 
+		// Ensure route layer visibility is set to default (true/visible)
+		this.routeLayer?.setVisibility(true);
+
 		// Update auth button
 		this.updateAuthUI();
 
@@ -202,9 +205,23 @@ class ExplorationMapApp {
 			const state = await loadState();
 
 			if (state) {
+				console.log("Loaded state from storage:", {
+					cellCount: state.visitedCells.size,
+					activityCount: state.processedActivityIds.size,
+					activitiesArray: state.activities.length,
+					firstActivity: state.activities[0],
+				});
+
 				this.visitedCells = state.visitedCells;
 				this.processedActivityIds = state.processedActivityIds;
 				this.currentConfig = state.config;
+				this.allActivities = state.activities;
+
+				// Update route layer with loaded activities
+				console.log("Setting activities on route layer, count:", state.activities.length);
+				this.routeLayer?.setActivities(state.activities);
+				// Update controls with activity types present
+				this.controls?.updateRouteActivityTypes(state.activities.map((a) => a.type));
 
 				// Update worker with loaded state
 				this.sendWorkerMessage({
@@ -393,6 +410,9 @@ class ExplorationMapApp {
 			// Update controls with activity types present
 			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
+			// Save activities immediately so they persist on refresh
+			await this.saveCurrentState();
+
 			// Filter out already processed activities
 			const newActivities = activities.filter((a) => !this.processedActivityIds.has(a.id));
 
@@ -534,8 +554,25 @@ class ExplorationMapApp {
 	 */
 	private async saveCurrentState(): Promise<void> {
 		try {
-			await saveState(this.visitedCells, this.processedActivityIds, this.currentConfig);
-			console.log("State saved");
+			console.log("Saving activities:", {
+				totalActivities: this.allActivities.length,
+				activitiesWithPolylines: this.allActivities.filter(
+					(a) => a.map?.summary_polyline || a.map?.polyline,
+				).length,
+				firstActivity: this.allActivities[0],
+			});
+
+			await saveState(
+				this.visitedCells,
+				this.processedActivityIds,
+				this.currentConfig,
+				this.allActivities,
+			);
+			console.log("State saved", {
+				cellCount: this.visitedCells.size,
+				activityCount: this.processedActivityIds.size,
+				activitiesWithPolylines: this.allActivities.length,
+			});
 		} catch (error) {
 			console.error("Failed to save state:", error);
 		}
