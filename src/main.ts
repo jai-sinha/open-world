@@ -379,6 +379,8 @@ class ExplorationMapApp {
 			// Store all activities for route overlay
 			this.allActivities = activities;
 			this.routeLayer?.setActivities(activities);
+			// Update controls with activity types present
+			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
 			// Filter out already processed activities
 			const newActivities = activities.filter((a) => !this.processedActivityIds.has(a.id));

@@ -2,6 +2,7 @@
 // Handles progress display, pause/resume, privacy settings, and configuration
 
 import type { ProcessingConfig, PrivacySettings } from "../types";
+import { ACTIVITY_COLORS } from "../lib/route-layer";
 
 export interface ControlsOptions {
 	onPrivacyChange?: (settings: PrivacySettings) => void;
@@ -25,6 +26,8 @@ export class Controls {
 	private progressText?: HTMLElement;
 	private progressSection?: HTMLElement;
 	private statsContainer?: HTMLElement;
+	private routeLegendContainer?: HTMLElement;
+	private routeLegendList?: HTMLElement;
 
 	constructor(container: HTMLElement, options: ControlsOptions = {}) {
 		this.container = container;
@@ -140,8 +143,23 @@ export class Controls {
 		content.className = "section-content";
 
 		// Toggle visibility
-		const visibilityToggle = this.createCheckbox("route-visible", "Show Routes", true, (checked) =>
-			this.options.onRouteToggle?.(checked),
+		const visibilityToggle = this.createCheckbox(
+			"route-visible",
+			"Show Routes",
+			true,
+			(checked) => {
+				this.options.onRouteToggle?.(checked);
+				// Hide/show the legend to match route visibility. If enabling routes, only show
+				// the legend when it actually contains items.
+				if (this.routeLegendContainer) {
+					if (checked) {
+						this.routeLegendContainer.style.display =
+							this.routeLegendList && this.routeLegendList.childElementCount ? "" : "none";
+					} else {
+						this.routeLegendContainer.style.display = "none";
+					}
+				}
+			},
 		);
 		content.appendChild(visibilityToggle);
 
@@ -168,6 +186,29 @@ export class Controls {
 			(value) => this.options.onRouteStyleChange?.({ lineOpacity: value }),
 		);
 		content.appendChild(opacityControl);
+
+		// Activity color legend (shows only activity types present)
+		const legend = document.createElement("div");
+		legend.className = "control-group route-legend";
+		legend.style.display = "none";
+
+		const legendTitle = document.createElement("label");
+		legendTitle.textContent = "Activity Colors:";
+		legend.appendChild(legendTitle);
+
+		const legendList = document.createElement("div");
+		legendList.className = "legend-items";
+		legendList.style.display = "flex";
+		legendList.style.flexWrap = "wrap";
+		legendList.style.gap = "8px";
+		legendList.style.marginTop = "6px";
+
+		// keep references for dynamic updates (only show items for activity types that exist)
+		this.routeLegendContainer = legend;
+		this.routeLegendList = legendList;
+
+		legend.appendChild(legendList);
+		content.appendChild(legend);
 
 		section.appendChild(content);
 		return section;
@@ -532,6 +573,64 @@ export class Controls {
 	 */
 	private updateConfig(partial: Partial<ProcessingConfig>): void {
 		this.options.onConfigChange?.(partial);
+	}
+
+	/**
+	 * Update the route activity types shown in the legend.
+	 * Pass an array of activity type strings (e.g. ['Run', 'Ride']).
+	 * If the array is empty or no known types are present, the legend is hidden.
+	 */
+	updateRouteActivityTypes(types: string[]): void {
+		if (!this.routeLegendList || !this.routeLegendContainer) return;
+
+		const provided = new Set(types || []);
+
+		// Keep known types in the defined order, only those present
+		const knownOrder = Object.keys(ACTIVITY_COLORS).filter((k) => k !== "default");
+		const presentKnown = knownOrder.filter((k) => provided.has(k));
+
+		// Any unknown types should be shown with default color
+		const unknowns = Array.from(provided).filter(
+			(t) => !Object.prototype.hasOwnProperty.call(ACTIVITY_COLORS, t),
+		);
+
+		// Clear existing items
+		this.routeLegendList.innerHTML = "";
+
+		if (presentKnown.length === 0 && unknowns.length === 0) {
+			// Nothing to show
+			this.routeLegendContainer.style.display = "none";
+			return;
+		}
+
+		// Show container only if the routes overlay is visible
+		const routesVisible =
+			(document.getElementById("route-visible") as HTMLInputElement | null)?.checked ?? true;
+		this.routeLegendContainer.style.display = routesVisible ? "" : "none";
+
+		const addItem = (type: string, color: string) => {
+			const item = document.createElement("div");
+			item.className = "legend-item";
+			item.style.display = "inline-flex";
+			item.style.alignItems = "center";
+			item.style.marginRight = "12px";
+			item.style.fontSize = "13px";
+
+			const swatch = document.createElement("span");
+			swatch.className = "legend-swatch";
+			swatch.style.cssText = `display:inline-block; width:12px; height:12px; background:${color}; border-radius:2px; margin-right:6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);`;
+
+			const label = document.createElement("span");
+			label.className = "legend-label";
+			label.textContent = type === "default" ? "Other" : type;
+
+			item.appendChild(swatch);
+			item.appendChild(label);
+			this.routeLegendList!.appendChild(item);
+		};
+
+		presentKnown.forEach((t) => addItem(t, ACTIVITY_COLORS[t] || ACTIVITY_COLORS.default));
+		unknowns.forEach((t) => addItem(t, ACTIVITY_COLORS.default));
 	}
 
 	/**

@@ -18,6 +18,7 @@ export const ACTIVITY_COLORS: Record<string, string> = {
 	Hike: "#FB8C00",
 	Swim: "#00ACC1",
 	AlpineSki: "#00897B",
+	default: "#fc5200",
 };
 
 export class RouteOverlayLayer {
