@@ -54,13 +54,6 @@ export async function saveState(
 			lastSync: Date.now(),
 		};
 
-		console.log("Storage.saveState - activities being saved:", {
-			count: activities.length,
-			withPolylines: activities.filter((a: any) => a.map?.summary_polyline || a.map?.polyline)
-				.length,
-			firstActivityMap: activities[0]?.map,
-		});
-
 		await db.put(STORE_NAME, state, "current");
 	} catch (error) {
 		console.error("Failed to save state to IndexedDB:", error);
@@ -94,12 +87,6 @@ export async function loadState(): Promise<{
 		}
 
 		const activities = state.activities || [];
-		console.log("Storage.loadState - activities being loaded:", {
-			count: activities.length,
-			withPolylines: activities.filter((a: any) => a.map?.summary_polyline || a.map?.polyline)
-				.length,
-			firstActivityMap: activities[0]?.map,
-		});
 
 		return {
 			visitedCells: new Set(state.visitedCells),
