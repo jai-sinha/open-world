@@ -52,6 +52,7 @@ class ExplorationMapApp {
 	private allActivities: StravaActivity[] = [];
 
 	private isProcessing = false;
+	private reprocessNotificationShown = false;
 
 	async initialize(): Promise<void> {
 		console.log("Initializing Exploration Map...");
@@ -447,6 +448,7 @@ class ExplorationMapApp {
 			this.controls?.showMessage("Failed to fetch activities", "error");
 			this.isProcessing = false;
 			this.controls?.setProcessing(false);
+			this.reprocessNotificationShown = false;
 		}
 	}
 
@@ -461,31 +463,48 @@ class ExplorationMapApp {
 					this.controls?.showMessage(response.data.message, "info");
 				}
 
-				// If worker reports a config update that requires reprocessing, clear current UI/state
-				// The worker will re-run processing itself if it has stored activities
+				// If worker reports a config update that requires reprocessing, decide how to react
 				if (response.data?.configUpdated) {
 					const needsReprocess = !!response.data?.needsReprocess;
 					if (needsReprocess) {
-						this.controls?.showMessage(
-							"Configuration updated — reprocessing activities...",
-							"info",
-						);
-
-						// Clear map visuals/state while reprocessing happens
-						this.explorationLayer?.clear();
-						this.visitedCells = new Set();
-						this.processedActivityIds = new Set();
-						this.controls?.updateStats({
-							cells: 0,
-							activities: 0,
-							rectangles: 0,
-							area: 0,
-						});
-
-						// Set processing state in UI (worker will send rectangle/progress updates shortly)
-						this.isProcessing = true;
-						this.controls?.setProcessing(true);
-						this.controls?.showProgress(true);
+						// Worker indicates no activities are stored (can't reprocess on its own)
+						if (response.data?.noActivities) {
+							if (this.allActivities && this.allActivities.length > 0) {
+								this.controls?.showMessage(
+									"Seeding worker with activities and starting reprocess...",
+									"info",
+								);
+								// Give the worker the activities it needs, then re-send the config to trigger reprocessing
+								this.sendWorkerMessage({ type: "init", data: { activities: this.allActivities } });
+								this.sendWorkerMessage({ type: "updateConfig", data: this.currentConfig });
+							} else {
+								// No local activities available to seed the worker: inform the user and don't clear visuals
+								this.controls?.showMessage(
+									"No activities available locally to reprocess. Fetch activities to apply privacy settings.",
+									"warning",
+								);
+							}
+							// Do not clear visuals/stats here; wait for worker rectangle updates (if any)
+						} else if (response.data?.queued) {
+							// Worker queued the reprocess until current processing completes -> do not clear visuals yet
+							this.controls?.showMessage(
+								"Reprocess queued until current processing completes",
+								"info",
+							);
+						} else {
+							// Worker will start reprocessing immediately; update UI to reflect processing state,
+							// but do not clear the existing rectangles/stats until new data arrives
+							if (!this.reprocessNotificationShown) {
+								this.controls?.showMessage(
+									"Configuration updated — reprocessing activities...",
+									"info",
+								);
+								this.reprocessNotificationShown = true;
+							}
+							this.isProcessing = true;
+							this.controls?.setProcessing(true);
+							this.controls?.showProgress(true);
+						}
 					} else {
 						this.controls?.showMessage("Configuration updated", "success");
 					}
@@ -500,7 +519,20 @@ class ExplorationMapApp {
 			case "rectangles":
 				// Update from worker response
 				if (response.data) {
-					const { rectangles, totalCells, visitedCells, processedActivityIds } = response.data;
+					const { rectangles, totalCells, visitedCells, processedActivityIds, reprocessing } =
+						response.data;
+
+					// If this is a reprocessing run, mark UI as processing (but don't clear old visuals here;
+					// the new rectangles will replace them as the worker sends updates)
+					if (reprocessing) {
+						this.isProcessing = true;
+						this.controls?.setProcessing(true);
+						if (!this.reprocessNotificationShown) {
+							this.controls?.showMessage("Reprocessing activities...", "info");
+							this.reprocessNotificationShown = true;
+						}
+						this.controls?.showProgress(true);
+					}
 
 					// Update local state
 					if (visitedCells) {
@@ -510,12 +542,12 @@ class ExplorationMapApp {
 						this.processedActivityIds = new Set(processedActivityIds);
 					}
 
-					// Update map
+					// Update map (worker will send partial rectangle updates during reprocess)
 					if (rectangles && this.explorationLayer) {
 						this.explorationLayer.setRectangles(rectangles);
 					}
 
-					// Update UI
+					// Update UI (progress/stats)
 					this.controls?.updateProgress(response.progress || 0, response.total || 0);
 
 					this.controls?.updateStats({
@@ -533,6 +565,8 @@ class ExplorationMapApp {
 			case "complete":
 				this.isProcessing = false;
 				this.controls?.setProcessing(false);
+				// Reset the one-time reprocess notification so a future reprocess will notify again
+				this.reprocessNotificationShown = false;
 
 				if (response.data?.rectangles && this.explorationLayer) {
 					this.explorationLayer.setRectangles(response.data.rectangles);

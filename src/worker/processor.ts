@@ -331,6 +331,7 @@ function updateConfig(config: Partial<ProcessingConfig> & { forceReprocess?: boo
 					message: "No activities stored in worker to reprocess",
 					configUpdated: true,
 					needsReprocess,
+					noActivities: true,
 					config: currentConfig,
 				},
 			};
