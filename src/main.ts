@@ -31,7 +31,7 @@ const APP_CONFIG = {
 	processing: {
 		cellSize: 25,
 		samplingStep: 12.5,
-		privacyDistance: 100,
+		privacyDistance: 400,
 		snapToGrid: false,
 		skipPrivate: false,
 		batchSize: 20,
@@ -140,7 +140,8 @@ class ExplorationMapApp {
 			lineColor: "#FF5722",
 			lineWidth: 3.5,
 			lineOpacity: 0.9,
-			showPrivate: false,
+			showPrivate: !this.currentConfig.skipPrivate,
+			privacyDistance: this.currentConfig.privacyDistance,
 		});
 
 		console.log("Map initialized");
@@ -220,16 +221,20 @@ class ExplorationMapApp {
 				// Update route layer with loaded activities
 				console.log("Setting activities on route layer, count:", state.activities.length);
 				this.routeLayer?.setActivities(state.activities);
+				// Ensure route overlay reflects privacy config (hide private, trim start/end)
+				this.routeLayer?.setStyle({ showPrivate: !this.currentConfig.skipPrivate });
+				this.routeLayer?.setPrivacyDistance(this.currentConfig.privacyDistance);
 				// Update controls with activity types present
 				this.controls?.updateRouteActivityTypes(state.activities.map((a) => a.type));
 
-				// Update worker with loaded state
+				// Update worker with loaded state (include activities so worker can reprocess if needed)
 				this.sendWorkerMessage({
 					type: "init",
 					data: {
 						visitedCells: Array.from(this.visitedCells),
 						processedActivityIds: Array.from(this.processedActivityIds),
 						config: this.currentConfig,
+						activities: this.allActivities || [],
 					},
 				});
 
@@ -407,6 +412,8 @@ class ExplorationMapApp {
 			// Store all activities for route overlay
 			this.allActivities = activities;
 			this.routeLayer?.setActivities(activities);
+			// Inform worker of the full activity set so it can reprocess if config changes
+			this.sendWorkerMessage({ type: "init", data: { activities } });
 			// Update controls with activity types present
 			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
@@ -449,6 +456,42 @@ class ExplorationMapApp {
 	private handleWorkerMessage(response: WorkerResponse): void {
 		switch (response.type) {
 			case "progress":
+				// Show any informational message from the worker (e.g., queued reprocess)
+				if (response.data?.message) {
+					this.controls?.showMessage(response.data.message, "info");
+				}
+
+				// If worker reports a config update that requires reprocessing, clear current UI/state
+				// The worker will re-run processing itself if it has stored activities
+				if (response.data?.configUpdated) {
+					const needsReprocess = !!response.data?.needsReprocess;
+					if (needsReprocess) {
+						this.controls?.showMessage(
+							"Configuration updated — reprocessing activities...",
+							"info",
+						);
+
+						// Clear map visuals/state while reprocessing happens
+						this.explorationLayer?.clear();
+						this.visitedCells = new Set();
+						this.processedActivityIds = new Set();
+						this.controls?.updateStats({
+							cells: 0,
+							activities: 0,
+							rectangles: 0,
+							area: 0,
+						});
+
+						// Set processing state in UI (worker will send rectangle/progress updates shortly)
+						this.isProcessing = true;
+						this.controls?.setProcessing(true);
+						this.controls?.showProgress(true);
+					} else {
+						this.controls?.showMessage("Configuration updated", "success");
+					}
+				}
+
+				// Regular progress update (if present)
 				if (response.progress !== undefined && response.total !== undefined) {
 					this.controls?.updateProgress(response.progress, response.total);
 				}
@@ -521,16 +564,41 @@ class ExplorationMapApp {
 	 * Update privacy settings
 	 */
 	private updatePrivacySettings(settings: any): void {
+		// When enabled, use a fixed 400m trim for both start and end.
+		const enabledProvided = typeof settings.enabled !== "undefined";
+		const skipProvided = typeof settings.skipPrivateActivities !== "undefined";
+
+		// If this change is only the slider (no explicit toggle/skip update), ignore it.
+		if (!enabledProvided && !skipProvided) {
+			return;
+		}
+
+		const enabled = enabledProvided ? !!settings.enabled : this.currentConfig.privacyDistance > 0;
+		const skipPrivate = skipProvided
+			? !!settings.skipPrivateActivities
+			: this.currentConfig.skipPrivate;
+
 		this.currentConfig = {
 			...this.currentConfig,
-			privacyDistance: settings.removeDistance || this.currentConfig.privacyDistance,
-			skipPrivate: settings.skipPrivateActivities || false,
+			// Use fixed 400 meters when enabled; otherwise 0 (disabled)
+			privacyDistance: enabled ? 400 : 0,
+			skipPrivate,
 		};
 
+		console.debug("updatePrivacySettings (toggle-only)", {
+			settings,
+			currentConfig: this.currentConfig,
+		});
+
+		// Notify worker about the config change (worker will reprocess when needed)
 		this.sendWorkerMessage({
 			type: "updateConfig",
 			data: this.currentConfig,
 		});
+
+		// Update route overlay immediately so polylines reflect the toggled privacy setting
+		this.routeLayer?.setStyle({ showPrivate: !this.currentConfig.skipPrivate });
+		this.routeLayer?.setPrivacyDistance(this.currentConfig.privacyDistance);
 	}
 
 	/**

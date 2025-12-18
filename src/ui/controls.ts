@@ -238,51 +238,11 @@ export class Controls {
 		// Privacy toggle
 		const privacyToggle = this.createCheckbox(
 			"privacy-enabled",
-			"Enable Privacy Filter",
+			"Enable Privacy Filter (remove first & last 400m)",
 			false,
 			(checked) => this.updatePrivacy({ enabled: checked }),
 		);
 		section.appendChild(privacyToggle);
-
-		// Distance slider
-		const distanceControl = document.createElement("div");
-		distanceControl.className = "control-group";
-
-		const distanceLabel = document.createElement("label");
-		distanceLabel.textContent = "Remove Distance (m):";
-		distanceLabel.htmlFor = "privacy-distance";
-		distanceControl.appendChild(distanceLabel);
-		this.privacyDistanceLabelEl = distanceLabel;
-
-		const distanceInput = document.createElement("input");
-		distanceInput.type = "range";
-		distanceInput.id = "privacy-distance";
-		distanceInput.min = "0";
-		distanceInput.max = "500";
-		distanceInput.value = "100";
-		distanceInput.step = "25";
-		this.privacyDistanceInput = distanceInput;
-
-		const distanceValue = document.createElement("span");
-		distanceValue.className = "value-display";
-		distanceValue.textContent = "100m";
-		this.privacyDistanceValueEl = distanceValue;
-
-		distanceInput.oninput = () => {
-			// Display converted units if necessary, but keep underlying value in meters
-			if (this.imperialUnits) {
-				const meters = parseInt(distanceInput.value, 10);
-				const feet = Math.round(meters * 3.280839895);
-				distanceValue.textContent = `${feet}ft`;
-			} else {
-				distanceValue.textContent = `${distanceInput.value}m`;
-			}
-			this.updatePrivacy({ removeDistance: parseInt(distanceInput.value) });
-		};
-
-		distanceControl.appendChild(distanceInput);
-		distanceControl.appendChild(distanceValue);
-		section.appendChild(distanceControl);
 
 		// Skip private activities
 		const skipPrivate = this.createCheckbox(

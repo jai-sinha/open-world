@@ -3,6 +3,7 @@
 import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import type { StravaActivity } from "../types";
 import polyline from "@mapbox/polyline";
+import { trimPolylineByDistance, haversineDistance } from "./projection";
 
 export interface RouteLayerOptions {
 	lineColor?: string;
@@ -10,6 +11,7 @@ export interface RouteLayerOptions {
 	lineOpacity?: number;
 	showPrivate?: boolean;
 	imperialUnits?: boolean;
+	privacyDistance?: number;
 }
 
 export const ACTIVITY_COLORS: Record<string, string> = {
@@ -40,6 +42,7 @@ export class RouteOverlayLayer {
 			lineOpacity: 0.9,
 			showPrivate: false,
 			imperialUnits: false,
+			privacyDistance: 0,
 			...options,
 		};
 		this.initialize();
@@ -146,14 +149,49 @@ export class RouteOverlayLayer {
 		if (!encoded) return null;
 
 		try {
-			const coordinates = polyline.decode(encoded).map(([lat, lng]) => [lng, lat]);
+			// Decode to [lat, lng] pairs
+			const points = polyline.decode(encoded) as Array<[number, number]>;
+
+			// Trim start/end by privacyDistance if configured
+			const trimmed =
+				this.options.privacyDistance && this.options.privacyDistance > 0
+					? trimPolylineByDistance(points, this.options.privacyDistance)
+					: points;
+
+			// Debug: log trimming info so we can verify the activity was trimmed
+			console.debug(
+				"route-layer: trim activity",
+				activity.id,
+				"origPts",
+				points.length,
+				"trimmedPts",
+				trimmed?.length || 0,
+				"privacyDistance",
+				this.options.privacyDistance,
+			);
+
+			// If trimming removed too much, skip drawing this activity
+			if (!trimmed || trimmed.length < 2) return null;
+
+			// Compute trimmed distance (use haversineDistance helper)
+			let trimmedDistance = 0;
+			for (let i = 1; i < trimmed.length; i++) {
+				trimmedDistance += haversineDistance(
+					trimmed[i - 1][0],
+					trimmed[i - 1][1],
+					trimmed[i][0],
+					trimmed[i][1],
+				);
+			}
+
+			const coordinates = trimmed.map(([lat, lng]) => [lng, lat]);
 			return {
 				type: "Feature" as const,
 				properties: {
 					id: activity.id,
 					name: activity.name,
 					type: activity.type,
-					distance: activity.distance,
+					distance: trimmedDistance,
 					date: activity.start_date,
 					color: ACTIVITY_COLORS[activity.type] || ACTIVITY_COLORS.default,
 				},
@@ -177,9 +215,22 @@ export class RouteOverlayLayer {
 			return;
 		}
 
+		// Debug: log update activity so we can verify trimming/rendering occurs
+		console.debug("route-layer.updateSource", {
+			features: features.length,
+			activities: activities.length,
+			privacyDistance: this.options.privacyDistance,
+		});
+
 		source.setData({
 			type: "FeatureCollection",
 			features: features as any,
+		});
+
+		// Debug: confirm source update applied
+		console.debug("route-layer: source.setData applied", {
+			sourceId: this.sourceId,
+			featureCount: features.length,
 		});
 	}
 
@@ -240,6 +291,18 @@ export class RouteOverlayLayer {
 		if (style.showPrivate !== undefined) {
 			this.updateSource(this.activities);
 		}
+		// Support updating privacyDistance through setStyle for convenience
+		if (style.privacyDistance !== undefined) {
+			this.setPrivacyDistance(style.privacyDistance);
+		}
+	}
+
+	/**
+	 * Update privacy distance (meters) used when trimming route polylines and re-render layer
+	 */
+	setPrivacyDistance(distance: number): void {
+		this.options.privacyDistance = distance;
+		this.updateSource(this.activities);
 	}
 
 	getActivityCount(): number {
