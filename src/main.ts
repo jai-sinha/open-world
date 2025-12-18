@@ -706,10 +706,47 @@ class ExplorationMapApp {
 		const totalAreaMeters = cellCount * cellAreaMeters;
 		return totalAreaMeters / 1_000_000; // Convert to km²
 	}
+
+	/**
+	 * Cleanup resources
+	 */
+	destroy(): void {
+		if (this.saveTimeout) {
+			clearTimeout(this.saveTimeout);
+		}
+
+		if (this.worker) {
+			this.worker.terminate();
+		}
+
+		if (this.routeLayer) {
+			this.routeLayer.remove();
+		}
+
+		if (this.map) {
+			this.map.remove();
+		}
+
+		if (this.controls) {
+			this.controls.destroy();
+		}
+	}
 }
 
 // Initialize app when DOM is ready
 let app: ExplorationMapApp;
+
+// Handle HMR cleanup
+// @ts-ignore
+if (import.meta.hot) {
+	// @ts-ignore
+	import.meta.hot.dispose(() => {
+		if (app) {
+			console.log("Cleaning up app instance...");
+			app.destroy();
+		}
+	});
+}
 
 if (document.readyState === "loading") {
 	document.addEventListener("DOMContentLoaded", initApp);
@@ -718,6 +755,10 @@ if (document.readyState === "loading") {
 }
 
 async function initApp() {
+	if (app) {
+		app.destroy();
+	}
+
 	app = new ExplorationMapApp();
 
 	try {
