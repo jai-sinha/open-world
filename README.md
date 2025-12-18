@@ -1,4 +1,4 @@
-# 🗺️ Strava Exploration Map
+# Strava Exploration Map
 
 A client-side MapLibre-based exploration map that visualizes all your Strava activities on a single interactive map, showing explored vs unexplored areas. Built for performance with progressive processing, Web Workers, and IndexedDB persistence.
 
@@ -7,8 +7,8 @@ A client-side MapLibre-based exploration map that visualizes all your Strava act
 - **Client-First Architecture**: All processing happens in your browser using Web Workers
 - **Progressive Processing**: Activities are processed in batches with real-time progress updates
 - **Fast & Lightweight**: Grid/bitset approach with rectangle merging for efficient rendering
-- **Smart Caching**: IndexedDB persistence means re-runs are instant
-- **Privacy Controls**: Remove/snap home locations, skip private activities
+- **Smart Caching**: IndexedDB persistence for instant re-runs
+- **Privacy Controls**: Remove start/finishes, skip private activities
 - **Responsive UX**: Prioritize viewport activities
 - **Beautiful Visualization**: MapLibre GL canvas layer for smooth, high-performance rendering
 

@@ -1,12 +1,7 @@
 // MapLibre canvas custom layer for fast rectangle rendering
 // This provides better performance than GeoJSON for large numbers of rectangles
 
-import type {
-	CustomLayerInterface,
-	Map as MapLibreMap,
-	CustomRenderMethod,
-	GeoJSONSource,
-} from "maplibre-gl";
+import type { CustomLayerInterface, Map as MapLibreMap, CustomRenderMethod } from "maplibre-gl";
 import type { Rectangle } from "../types";
 import { cellToPoint, metersToLatLng } from "./projection";
 
@@ -206,87 +201,4 @@ export function createExplorationLayer(
 
 	map.addLayer(layer);
 	return layer;
-}
-
-/**
- * Alternative: Create GeoJSON-based layer for comparison
- */
-export function createGeoJSONLayer(map: MapLibreMap, id: string = "exploration-geojson"): void {
-	// Add source
-	map.addSource(id, {
-		type: "geojson",
-		data: {
-			type: "FeatureCollection",
-			features: [],
-		},
-	});
-
-	// Add fill layer
-	map.addLayer({
-		id: `${id}-fill`,
-		type: "fill",
-		source: id,
-		paint: {
-			"fill-color": "#4CAF50",
-			"fill-opacity": 0.3,
-		},
-	});
-
-	// Add outline layer
-	map.addLayer({
-		id: `${id}-outline`,
-		type: "line",
-		source: id,
-		paint: {
-			"line-color": "#2E7D32",
-			"line-width": 1,
-		},
-	});
-}
-
-/**
- * Update GeoJSON layer data
- */
-export function updateGeoJSONLayer(
-	map: MapLibreMap,
-	rectangles: Rectangle[],
-	cellSize: number,
-	id: string = "exploration-geojson",
-): void {
-	const features = rectangles.map((rect) => {
-		const x1 = rect.minX * cellSize;
-		const y1 = rect.minY * cellSize;
-		const x2 = (rect.maxX + 1) * cellSize;
-		const y2 = (rect.maxY + 1) * cellSize;
-
-		const sw = metersToLatLng(x1, y1);
-		const se = metersToLatLng(x2, y1);
-		const ne = metersToLatLng(x2, y2);
-		const nw = metersToLatLng(x1, y2);
-
-		return {
-			type: "Feature" as const,
-			properties: {},
-			geometry: {
-				type: "Polygon" as const,
-				coordinates: [
-					[
-						[sw.lng, sw.lat],
-						[se.lng, se.lat],
-						[ne.lng, ne.lat],
-						[nw.lng, nw.lat],
-						[sw.lng, sw.lat],
-					],
-				],
-			},
-		};
-	});
-
-	const source = map.getSource(id) as GeoJSONSource | undefined;
-	if (source) {
-		source.setData({
-			type: "FeatureCollection",
-			features,
-		});
-	}
 }
