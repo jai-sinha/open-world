@@ -21,7 +21,7 @@ const APP_CONFIG = {
 	},
 	map: {
 		defaultCenter: [11.582, 48.1351] as [number, number], // Munich
-		defaultZoom: 8,
+		defaultZoom: 12,
 		style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
 	},
 	processing: {

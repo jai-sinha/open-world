@@ -158,18 +158,6 @@ export class RouteOverlayLayer {
 					? trimPolylineByDistance(points, this.options.privacyDistance)
 					: points;
 
-			// Debug: log trimming info so we can verify the activity was trimmed
-			console.debug(
-				"route-layer: trim activity",
-				activity.id,
-				"origPts",
-				points.length,
-				"trimmedPts",
-				trimmed?.length || 0,
-				"privacyDistance",
-				this.options.privacyDistance,
-			);
-
 			// If trimming removed too much, skip drawing this activity
 			if (!trimmed || trimmed.length < 2) return null;
 
@@ -215,22 +203,9 @@ export class RouteOverlayLayer {
 			return;
 		}
 
-		// Debug: log update activity so we can verify trimming/rendering occurs
-		console.debug("route-layer.updateSource", {
-			features: features.length,
-			activities: activities.length,
-			privacyDistance: this.options.privacyDistance,
-		});
-
 		source.setData({
 			type: "FeatureCollection",
 			features: features as any,
-		});
-
-		// Debug: confirm source update applied
-		console.debug("route-layer: source.setData applied", {
-			sourceId: this.sourceId,
-			featureCount: features.length,
 		});
 	}
 
