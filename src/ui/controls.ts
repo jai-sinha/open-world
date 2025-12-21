@@ -14,6 +14,7 @@ export interface ControlsOptions {
 		lineOpacity?: number;
 		colorByType?: boolean;
 	}) => void;
+	onLocationSelect?: (center: [number, number]) => void;
 }
 
 export class Controls {
@@ -49,6 +50,10 @@ export class Controls {
 		this.container.innerHTML = "";
 		this.container.className = "exploration-controls";
 
+		// Location Search
+		const locationSection = this.createLocationSection();
+		this.container.appendChild(locationSection);
+
 		// Progress section
 		const progressSection = this.createProgressSection();
 		this.container.appendChild(progressSection);
@@ -73,6 +78,77 @@ export class Controls {
 
 		// Apply initial processing state (hide progress section if not processing)
 		this.setProcessing(this.isProcessing);
+	}
+
+	/**
+	 * Create location search section
+	 */
+	private createLocationSection(): HTMLElement {
+		const section = document.createElement("div");
+		section.className = "control-section location-section";
+
+		const title = document.createElement("h3");
+		title.textContent = "Jump to Location";
+		section.appendChild(title);
+
+		const inputGroup = document.createElement("div");
+		inputGroup.className = "input-group";
+		inputGroup.style.display = "flex";
+		inputGroup.style.gap = "8px";
+		inputGroup.style.marginBottom = "10px";
+
+		const input = document.createElement("input");
+		input.type = "text";
+		input.placeholder = "City, Country, ZIP code...";
+		input.style.flex = "1";
+		input.style.padding = "4px";
+		input.style.borderRadius = "4px";
+		input.style.border = "1px solid #ccc";
+
+		const button = document.createElement("button");
+		button.textContent = "Go";
+		button.style.padding = "4px 8px";
+		button.style.cursor = "pointer";
+
+		const handleSearch = async () => {
+			const query = input.value.trim();
+			if (!query) return;
+
+			const originalText = button.textContent;
+			button.disabled = true;
+			button.textContent = "...";
+
+			try {
+				const response = await fetch(
+					`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`,
+				);
+				const data = await response.json();
+
+				if (data && data.length > 0) {
+					const { lat, lon } = data[0];
+					this.options.onLocationSelect?.([parseFloat(lon), parseFloat(lat)]);
+				} else {
+					this.showMessage("Location not found", "error");
+				}
+			} catch (e) {
+				console.error("Search failed:", e);
+				this.showMessage("Search failed", "error");
+			} finally {
+				button.disabled = false;
+				button.textContent = originalText;
+			}
+		};
+
+		button.onclick = handleSearch;
+		input.onkeydown = (e) => {
+			if (e.key === "Enter") handleSearch();
+		};
+
+		inputGroup.appendChild(input);
+		inputGroup.appendChild(button);
+		section.appendChild(inputGroup);
+
+		return section;
 	}
 
 	/**

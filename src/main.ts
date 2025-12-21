@@ -133,6 +133,9 @@ class ExplorationMapApp {
 				this.routeLayer?.setUnits(imp);
 			},
 			onRouteStyleChange: (s) => this.routeLayer?.setStyle(s),
+			onLocationSelect: (center) => {
+				this.map?.jumpTo({ center, zoom: 12 });
+			},
 		});
 
 		this.controls.setUnits(this.routeLayer?.isImperialUnits?.() ?? false);
