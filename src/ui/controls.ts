@@ -64,13 +64,13 @@ export class Controls {
 		const privacySection = this.createPrivacySection();
 		this.container.appendChild(privacySection);
 
-		// Advanced settings
-		const advancedSection = this.createAdvancedSection();
-		this.container.appendChild(advancedSection);
-
 		// Route overlay settings
 		const routeSection = this.createRouteSection();
 		this.container.appendChild(routeSection);
+
+		// Advanced settings
+		const advancedSection = this.createAdvancedSection();
+		this.container.appendChild(advancedSection);
 
 		// Stats display
 		const statsSection = this.createStatsSection();
@@ -201,20 +201,14 @@ export class Controls {
 	 */
 	private createRouteSection(): HTMLElement {
 		const section = document.createElement("div");
-		section.className = "control-section route-section collapsed";
+		section.className = "control-section route-section";
 
 		const header = document.createElement("div");
 		header.className = "section-header";
-		header.onclick = () => section.classList.toggle("collapsed");
 
 		const title = document.createElement("h3");
 		title.textContent = "Route Overlay";
 		header.appendChild(title);
-
-		const toggle = document.createElement("span");
-		toggle.className = "toggle-icon";
-		toggle.textContent = "▼";
-		header.appendChild(toggle);
 
 		section.appendChild(header);
 
@@ -360,7 +354,7 @@ export class Controls {
 		// Cell size selector
 		const cellSizeControl = this.createRangeControl(
 			"cell-size",
-			"Grid Cell Size (m):",
+			"Grid Cell Size (m) (increase for better rendering performance):",
 			10,
 			100,
 			25,
@@ -372,7 +366,7 @@ export class Controls {
 		// Sampling step selector
 		const samplingControl = this.createRangeControl(
 			"sampling-step",
-			"Sampling Step (m):",
+			"Sampling Step (m) (increase for better rendering performance):",
 			5,
 			50,
 			12.5,
