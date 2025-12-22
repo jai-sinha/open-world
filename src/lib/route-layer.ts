@@ -3,7 +3,7 @@
 import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import type { StravaActivity } from "../types";
 import polyline from "@mapbox/polyline";
-import { trimPolylineByDistance, haversineDistance } from "./projection";
+import { trimPolylineByDistance } from "./projection";
 
 export interface RouteLayerOptions {
 	lineColor?: string;
@@ -39,7 +39,7 @@ export class RouteOverlayLayer {
 		this.options = {
 			lineColor: "#FF5722",
 			lineWidth: 3.5,
-			lineOpacity: 0.9,
+			lineOpacity: 0.7,
 			showPrivate: false,
 			imperialUnits: false,
 			privacyDistance: 0,
@@ -161,17 +161,6 @@ export class RouteOverlayLayer {
 			// If trimming removed too much, skip drawing this activity
 			if (!trimmed || trimmed.length < 2) return null;
 
-			// Compute trimmed distance (use haversineDistance helper)
-			let trimmedDistance = 0;
-			for (let i = 1; i < trimmed.length; i++) {
-				trimmedDistance += haversineDistance(
-					trimmed[i - 1][0],
-					trimmed[i - 1][1],
-					trimmed[i][0],
-					trimmed[i][1],
-				);
-			}
-
 			const coordinates = trimmed.map(([lat, lng]) => [lng, lat]);
 			return {
 				type: "Feature" as const,
@@ -179,7 +168,7 @@ export class RouteOverlayLayer {
 					id: activity.id,
 					name: activity.name,
 					type: activity.type,
-					distance: trimmedDistance,
+					distance: activity.distance,
 					date: activity.start_date,
 					color: ACTIVITY_COLORS[activity.type] || ACTIVITY_COLORS.default,
 				},

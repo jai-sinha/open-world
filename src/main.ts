@@ -27,7 +27,7 @@ const APP_CONFIG = {
 	processing: {
 		cellSize: 25,
 		samplingStep: 12.5,
-		privacyDistance: 400,
+		privacyDistance: 0,
 		snapToGrid: false,
 		skipPrivate: false,
 		batchSize: 20,
@@ -104,7 +104,7 @@ class ExplorationMapApp {
 		this.routeLayer = createRouteOverlay(this.map, {
 			lineColor: "#FF5722",
 			lineWidth: 3.5,
-			lineOpacity: 0.9,
+			lineOpacity: 0.7,
 			showPrivate: !this.currentConfig.skipPrivate,
 			privacyDistance: this.currentConfig.privacyDistance,
 		});

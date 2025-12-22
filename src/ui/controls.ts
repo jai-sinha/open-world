@@ -261,7 +261,7 @@ export class Controls {
 			"Opacity:",
 			0,
 			1,
-			0.9,
+			0.7,
 			0.1,
 			(value) => this.options.onRouteStyleChange?.({ lineOpacity: value }),
 		);
