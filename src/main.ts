@@ -4,7 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import type { StravaActivity, ProcessingConfig, WorkerMessage, WorkerResponse } from "./types";
 import { createStravaClient, StravaClient } from "./lib/strava";
-import { loadState, saveState } from "./lib/storage";
+import { loadState, saveState, clearState } from "./lib/storage";
 import { createExplorationLayer, ExplorationCanvasLayer } from "./lib/canvas-layer";
 import { createRouteOverlay, RouteOverlayLayer } from "./lib/route-layer";
 import { createControls, Controls } from "./ui/controls";
@@ -223,6 +223,7 @@ class ExplorationMapApp {
 			authBtn.onclick = () => {
 				this.stravaClient?.logout();
 				this.updateAuthUI();
+				clearState();
 				this.controls?.showMessage("Logged out", "info");
 			};
 

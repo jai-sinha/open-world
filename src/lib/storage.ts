@@ -108,6 +108,7 @@ export async function clearState(): Promise<void> {
 	try {
 		const db = await getDB();
 		await db.delete(STORE_NAME, "current");
+		console.log("State cleared");
 	} catch (error) {
 		console.error("Failed to clear state from IndexedDB:", error);
 		throw error;
