@@ -8,6 +8,7 @@ import { loadState, saveState, clearState } from "./lib/storage";
 import { createExplorationLayer, ExplorationCanvasLayer } from "./lib/canvas-layer";
 import { createRouteOverlay, RouteOverlayLayer } from "./lib/route-layer";
 import { createControls, Controls } from "./ui/controls";
+import { createSidebar, Sidebar } from "./ui/sidebar";
 
 // Configuration
 let stravaClientId: string;
@@ -39,6 +40,7 @@ class ExplorationMapApp {
 	private stravaClient?: StravaClient;
 	private worker?: Worker;
 	private controls?: Controls;
+	private sidebar?: Sidebar;
 	private explorationLayer?: ExplorationCanvasLayer;
 	private routeLayer?: RouteOverlayLayer;
 
@@ -107,6 +109,7 @@ class ExplorationMapApp {
 			lineOpacity: 0.7,
 			showPrivate: !this.currentConfig.skipPrivate,
 			privacyDistance: this.currentConfig.privacyDistance,
+			onRouteClick: (features) => this.sidebar?.show(features),
 		});
 	}
 
@@ -124,6 +127,8 @@ class ExplorationMapApp {
 		const container = document.getElementById("controls");
 		if (!container) throw new Error("Controls container not found");
 
+		this.sidebar = createSidebar(document.body);
+
 		this.controls = createControls(container, {
 			onPrivacyChange: (s) => this.updatePrivacySettings(s),
 			onConfigChange: (c) => this.updateConfig(c),
@@ -131,6 +136,7 @@ class ExplorationMapApp {
 			onUnitsToggle: (imp) => {
 				this.controls?.setUnits(imp);
 				this.routeLayer?.setUnits(imp);
+				this.sidebar?.setUnits(imp);
 			},
 			onRouteStyleChange: (s) => this.routeLayer?.setStyle(s),
 			onLocationSelect: (center) => {
@@ -139,6 +145,7 @@ class ExplorationMapApp {
 		});
 
 		this.controls.setUnits(this.routeLayer?.isImperialUnits?.() ?? false);
+		this.sidebar?.setUnits(this.routeLayer?.isImperialUnits?.() ?? false);
 		this.routeLayer?.setVisibility(true);
 		this.updateAuthUI();
 	}
@@ -429,6 +436,7 @@ class ExplorationMapApp {
 		this.routeLayer?.remove();
 		this.map?.remove();
 		this.controls?.destroy();
+		this.sidebar?.destroy();
 	}
 }
 

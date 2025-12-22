@@ -12,7 +12,11 @@ export interface RouteLayerOptions {
 	showPrivate?: boolean;
 	imperialUnits?: boolean;
 	privacyDistance?: number;
+	onRouteClick?: (features: any[]) => void;
 }
+
+type InternalRouteLayerOptions = Required<Omit<RouteLayerOptions, "onRouteClick">> &
+	Pick<RouteLayerOptions, "onRouteClick">;
 
 export const ACTIVITY_COLORS: Record<string, string> = {
 	Run: "#E53935",
@@ -29,7 +33,7 @@ export class RouteOverlayLayer {
 	private sourceId = "strava-routes";
 	private layerId = "strava-routes-layer";
 	private activities: StravaActivity[] = [];
-	private options: Required<RouteLayerOptions>;
+	private options: InternalRouteLayerOptions;
 	private visible = true;
 	private tooltip: HTMLDivElement | null = null;
 	private currentFeatureIds: string = "";
@@ -95,7 +99,17 @@ export class RouteOverlayLayer {
 
 		this.map.on("mousemove", this.layerId, this.onMouseMove);
 		this.map.on("mouseleave", this.layerId, this.onMouseLeave);
+		this.map.on("click", this.layerId, this.onRouteClick);
 	}
+
+	private onRouteClick = (e: any): void => {
+		if (!this.options.onRouteClick) return;
+
+		const features = this.map.queryRenderedFeatures(e.point, { layers: [this.layerId] });
+		if (features.length > 0) {
+			this.options.onRouteClick(features);
+		}
+	};
 
 	private onMouseMove = (e: any): void => {
 		if (!this.tooltip) return;
@@ -244,7 +258,7 @@ export class RouteOverlayLayer {
 	}
 
 	setStyle(style: Partial<RouteLayerOptions>): void {
-		this.options = { ...this.options, ...style };
+		this.options = { ...this.options, ...style } as InternalRouteLayerOptions;
 
 		if (style.lineWidth !== undefined) {
 			this.map.setPaintProperty(this.layerId, "line-width", style.lineWidth);
@@ -276,6 +290,7 @@ export class RouteOverlayLayer {
 	remove(): void {
 		this.map.off("mousemove", this.layerId, this.onMouseMove);
 		this.map.off("mouseleave", this.layerId, this.onMouseLeave);
+		this.map.off("click", this.layerId, this.onRouteClick);
 
 		if (this.tooltip) {
 			this.tooltip.remove();
