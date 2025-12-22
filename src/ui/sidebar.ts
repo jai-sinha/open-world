@@ -9,6 +9,7 @@ export class Sidebar {
 	private content: HTMLElement;
 	private options: SidebarOptions;
 	private visible = false;
+	private dtf: Intl.DateTimeFormat;
 	private currentActivities: any[] = [];
 
 	constructor(container: HTMLElement, options: SidebarOptions = {}) {
@@ -16,6 +17,16 @@ export class Sidebar {
 		this.options = options;
 		this.panel = document.createElement("div");
 		this.content = document.createElement("div");
+		// create locale-aware date/time formatter once for reuse
+		this.dtf = new Intl.DateTimeFormat(undefined, {
+			weekday: "short",
+			year: "numeric",
+			month: "short",
+			day: "numeric",
+			hour: "numeric",
+			minute: "2-digit",
+			timeZone: "UTC", // keeps activity's orig local time over client local time
+		});
 		this.initialize();
 	}
 
@@ -134,12 +145,7 @@ export class Sidebar {
 			};
 
 			// Format data
-			const date = new Date(activity.date).toLocaleDateString(undefined, {
-				weekday: "short",
-				year: "numeric",
-				month: "short",
-				day: "numeric",
-			});
+			const date = this.dtf.format(new Date(activity.date));
 
 			const distance = this.options.imperialUnits
 				? (activity.distance / 1609.344).toFixed(2) + " mi"

@@ -11,6 +11,7 @@ A client-side MapLibre-based exploration map that visualizes all your Strava act
 - **Privacy Controls**: Remove start/finishes, skip private activities
 - **Responsive UX**: Prioritize viewport activities
 - **Beautiful Visualization**: MapLibre GL canvas layer for smooth, high-performance rendering
+- **Interactivity**: Hover a route to see its details, or click it to open a sidebar with even more information
 
 ## Grid/Bitset Algorithm
 

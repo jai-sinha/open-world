@@ -278,54 +278,6 @@ export class StravaClient {
 	}
 
 	/**
-	 * Fetch detailed activity with full polyline (if summary_polyline not sufficient)
-	 */
-	async fetchActivityDetail(activityId: number): Promise<StravaActivity> {
-		if (!this.accessToken) {
-			throw new Error("Not authenticated");
-		}
-
-		const response = await fetch(`${STRAVA_API_BASE}/activities/${activityId}`, {
-			headers: {
-				Authorization: `Bearer ${this.accessToken}`,
-			},
-		});
-
-		if (!response.ok) {
-			throw new Error(`Failed to fetch activity ${activityId}: ${response.statusText}`);
-		}
-
-		return response.json();
-	}
-
-	/**
-	 * Batch fetch activity details (with rate limiting)
-	 */
-	async fetchActivityDetails(
-		activityIds: number[],
-		onProgress?: (count: number, total: number) => void,
-	): Promise<StravaActivity[]> {
-		const activities: StravaActivity[] = [];
-
-		for (let i = 0; i < activityIds.length; i++) {
-			try {
-				const activity = await this.fetchActivityDetail(activityIds[i]);
-				activities.push(activity);
-				onProgress?.(i + 1, activityIds.length);
-
-				// Rate limiting delay
-				if (i < activityIds.length - 1) {
-					await new Promise((resolve) => setTimeout(resolve, 200));
-				}
-			} catch (error) {
-				console.error(`Failed to fetch activity ${activityIds[i]}:`, error);
-			}
-		}
-
-		return activities;
-	}
-
-	/**
 	 * Get current rate limit status
 	 */
 	async getRateLimitStatus(): Promise<{

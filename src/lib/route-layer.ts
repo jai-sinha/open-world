@@ -183,7 +183,7 @@ export class RouteOverlayLayer {
 					name: activity.name,
 					type: activity.type,
 					distance: activity.distance,
-					date: activity.start_date,
+					date: activity.start_date_local,
 					color: ACTIVITY_COLORS[activity.type] || ACTIVITY_COLORS.default,
 				},
 				geometry: { type: "LineString" as const, coordinates },

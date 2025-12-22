@@ -5,7 +5,7 @@ export interface StravaActivity {
 	name: string;
 	type: string;
 	distance: number;
-	start_date: string;
+	start_date_local: string;
 	start_latlng?: [number, number];
 	end_latlng?: [number, number];
 	map?: {
