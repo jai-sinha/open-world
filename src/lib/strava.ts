@@ -332,3 +332,11 @@ export function createStravaClient(config: StravaConfig): StravaClient {
 export function getStravaClient(): StravaClient | null {
 	return clientInstance;
 }
+
+/**
+ * Reset singleton instance
+ */
+export function resetClient(): void {
+	clientInstance = null;
+}
+

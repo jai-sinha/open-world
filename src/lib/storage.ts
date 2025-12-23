@@ -207,3 +207,21 @@ export async function mergeCells(
 		throw error;
 	}
 }
+
+/**
+ * Close DB connection
+ */
+export async function closeDB(): Promise<void> {
+	// If no DB was ever opened, nothing to do
+	if (!dbPromise) return;
+
+	try {
+		const db = await dbPromise;
+		db.close();
+	} catch (e) {
+		// ignore errors during shutdown
+	} finally {
+		// Reset promise so a subsequent getDB() will reopen cleanly
+		dbPromise = null;
+	}
+}

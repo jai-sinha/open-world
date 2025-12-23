@@ -426,12 +426,46 @@ class ExplorationMapApp {
 	}
 
 	destroy(): void {
-		if (this.saveTimeout) clearTimeout(this.saveTimeout);
+		if (this.saveTimeout) {
+			clearTimeout(this.saveTimeout);
+			this.saveTimeout = undefined;
+		}
+
+		// Free large in-memory structures
+		this.allActivities.length = 0;
+		this.visitedCells.clear();
+		this.processedActivityIds.clear();
+
+		// Ask worker to drop big state, then terminate
+		try {
+			this.worker?.postMessage({ type: "clear" });
+		} catch (e) {
+			// ignore errors while posting message during unload
+		}
 		this.worker?.terminate();
+		this.worker = undefined;
+
 		this.routeLayer?.remove();
-		this.map?.remove();
+		this.routeLayer = undefined;
+
+		// Force GL context loss so textures are freed quickly
+		if (this.map) {
+			try {
+				const canvas = this.map.getCanvas() as HTMLCanvasElement | null;
+				const gl = (canvas?.getContext("webgl2") || canvas?.getContext("webgl")) as any;
+				gl?.getExtension?.("WEBGL_lose_context")?.loseContext?.();
+			} catch (e) {
+				// ignore
+			}
+			this.map.remove();
+			this.map = undefined;
+		}
+
 		this.controls?.destroy();
+		this.controls = undefined;
+
 		this.sidebar?.destroy();
+		this.sidebar = undefined;
 	}
 }
 
@@ -443,6 +477,10 @@ if (import.meta.hot) {
 	// @ts-ignore
 	import.meta.hot.dispose(() => app?.destroy());
 }
+
+// ensure cleanup on full reloads
+window.addEventListener("beforeunload", () => app?.destroy());
+window.addEventListener("unload", () => app?.destroy());
 
 const init = async () => {
 	if (app) app.destroy();
