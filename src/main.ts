@@ -105,8 +105,8 @@ class ExplorationMapApp {
 
 		this.routeLayer = createRouteOverlay(this.map, {
 			lineColor: "#FF5722",
-			lineWidth: 3.5,
-			lineOpacity: 0.7,
+			lineWidth: 4.5,
+			lineOpacity: 0.5,
 			showPrivate: !this.currentConfig.skipPrivate,
 			privacyDistance: this.currentConfig.privacyDistance,
 			onRouteClick: (features) => this.sidebar?.show(features),

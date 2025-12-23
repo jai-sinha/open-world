@@ -250,7 +250,7 @@ export class Controls {
 			"Line Width:",
 			1,
 			5,
-			3.5,
+			4.5,
 			0.5,
 			(value) => this.options.onRouteStyleChange?.({ lineWidth: value }),
 		);
@@ -261,7 +261,7 @@ export class Controls {
 			"Opacity:",
 			0,
 			1,
-			0.7,
+			0.5,
 			0.1,
 			(value) => this.options.onRouteStyleChange?.({ lineOpacity: value }),
 		);
@@ -474,16 +474,30 @@ export class Controls {
 		input.id = id;
 		input.min = min.toString();
 		input.max = max.toString();
-		input.value = value.toString();
 		input.step = step.toString();
 
 		const valueDisplay = document.createElement("span");
 		valueDisplay.className = "value-display";
-		valueDisplay.textContent = value.toString();
+
+		// ensure slider UI and numeric values stay aligned during inital render
+		// i shoulda just used react lol
+		const clampValue = (raw: number): number => {
+			if (Number.isNaN(raw)) return min;
+			return Math.min(max, Math.max(min, raw));
+		};
+
+		const setInputValue = (raw: number): number => {
+			const clamped = clampValue(raw);
+			input.value = clamped.toString();
+			valueDisplay.textContent = clamped.toString();
+			return clamped;
+		};
+
+		setInputValue(value);
 
 		input.oninput = () => {
-			valueDisplay.textContent = input.value;
-			onChange(parseFloat(input.value));
+			const clamped = setInputValue(parseFloat(input.value));
+			onChange(clamped);
 		};
 
 		control.appendChild(input);
