@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"description": "Client-side MapLibre exploration map for Strava activities with Web Workers and IndexedDB",
 	"type": "module",
-	"homepage": "https://github.com/jai-sinha/open-world",
+	"homepage": "openworld.jsinha.com",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/jai-sinha/open-world.git"

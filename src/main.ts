@@ -226,18 +226,13 @@ class ExplorationMapApp {
 
 		if (this.stravaClient?.isAuthenticated()) {
 			const athlete = this.stravaClient.getAthlete();
-			authBtn.textContent = "Logout";
+			authBtn.textContent = `Logout ${athlete.firstname} ${athlete.lastname}`;
 			authBtn.onclick = () => {
 				this.stravaClient?.logout();
 				this.updateAuthUI();
 				clearState();
 				this.controls?.showMessage("Logged out", "info");
 			};
-
-			if (athlete) {
-				userInfo.textContent = `${athlete.firstname} ${athlete.lastname}`;
-				userInfo.style.display = "block";
-			}
 
 			fetchBtn.style.display = "block";
 			fetchBtn.onclick = () => this.fetchAndProcessActivities();
