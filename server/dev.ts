@@ -204,7 +204,8 @@ const _server = Bun.serve({
 
 			// Serve any file under /dist or /worker directories
 			if (path.startsWith("/dist/") || path.startsWith("/worker/")) {
-				const fpath = "." + path;
+				// Map /worker/ requests to ./dist/worker/ since that's where the build output goes
+				const fpath = path.startsWith("/worker/") ? "./dist" + path : "." + path;
 				try {
 					const f = Bun.file(fpath);
 					if (await f.exists()) {
