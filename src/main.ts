@@ -114,7 +114,7 @@ class ExplorationMapApp {
 	}
 
 	private initializeWorker(): void {
-		this.worker = new Worker("/dist/worker/processor.js", { type: "module" });
+		this.worker = new Worker("/worker/processor.js", { type: "module" });
 		this.worker.onmessage = (event) => this.handleWorkerMessage(event.data);
 		this.worker.onerror = (error) => {
 			console.error("Worker error:", error);

@@ -214,11 +214,6 @@ export class RouteOverlayLayer {
 
 	setActivities(activities: StravaActivity[]): void {
 		this.activities = activities;
-
-		const activitiesWithPolylines = activities.filter(
-			(a) => a.map?.summary_polyline || a.map?.polyline,
-		);
-
 		this.updateSource(this.activities);
 	}
 

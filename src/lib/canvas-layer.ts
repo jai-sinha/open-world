@@ -3,7 +3,7 @@
 
 import type { CustomLayerInterface, Map as MapLibreMap, CustomRenderMethod } from "maplibre-gl";
 import type { Rectangle } from "../types";
-import { cellToPoint, metersToLatLng } from "./projection";
+import { metersToLatLng } from "./projection";
 
 export interface CanvasLayerOptions {
 	id: string;
@@ -92,7 +92,7 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 		return this.rectangles.length;
 	}
 
-	onAdd(map: MapLibreMap, gl: WebGLRenderingContext): void {
+	onAdd(map: MapLibreMap, _gl: WebGLRenderingContext): void {
 		this.map = map;
 	}
 
@@ -100,7 +100,7 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 		this.map = undefined;
 	}
 
-	render: CustomRenderMethod = (gl, matrix) => {
+	render: CustomRenderMethod = (_gl, _matrix) => {
 		// This method is called for WebGL rendering mode
 		// We use the 2d rendering mode instead (see below)
 	};
@@ -108,7 +108,7 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 	/**
 	 * Main render method for 2D canvas
 	 */
-	prerender?: CustomRenderMethod = (gl, matrix) => {
+	prerender?: CustomRenderMethod = (_gl, _matrix) => {
 		// Optional pre-render hook
 	};
 

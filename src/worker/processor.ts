@@ -9,13 +9,7 @@ import type {
 	ProcessingConfig,
 	Rectangle,
 } from "../types";
-import {
-	latLngToMeters,
-	pointToCell,
-	cellKey,
-	samplePolyline,
-	trimPolylineByDistance,
-} from "../lib/projection";
+import { pointToCell, cellKey, samplePolyline, trimPolylineByDistance } from "../lib/projection";
 import { mergeToRectangles } from "../lib/grid";
 
 // Worker state
@@ -296,7 +290,6 @@ async function reprocessAllActivities(batchSize: number = 20): Promise<void> {
 }
 
 function updateConfig(config: Partial<ProcessingConfig> & { forceReprocess?: boolean }): void {
-	const prevConfig = { ...currentConfig };
 	currentConfig = { ...currentConfig, ...config };
 
 	const force = (config as any).forceReprocess === true;

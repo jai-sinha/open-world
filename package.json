@@ -1,8 +1,21 @@
 {
 	"name": "open-world-strava",
 	"version": "0.1.0",
-	"description": "Client-side MapLibre exploration map for Strava activities",
+	"description": "Client-side MapLibre exploration map for Strava activities with Web Workers and IndexedDB",
 	"type": "module",
+	"homepage": "https://github.com/jai-sinha/open-world",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/jai-sinha/open-world.git"
+	},
+	"bugs": {
+		"url": "https://github.com/jai-sinha/open-world/issues"
+	},
+	"author": "Jai Sinha <jaisinha219@gmail.com>",
+	"license": "MIT",
+	"engines": {
+		"bun": "^1.0.0"
+	},
 	"scripts": {
 		"dev": "bun run --hot server/dev.ts",
 		"build": "bun run build.ts",
@@ -17,7 +30,7 @@
 	},
 	"devDependencies": {
 		"@types/mapbox__polyline": "^1.0.5",
-		"bun-types": "latest",
+		"bun-types": "^1.0.0",
 		"typescript": "^5.3.3"
 	},
 	"keywords": [
@@ -25,8 +38,18 @@
 		"maplibre",
 		"exploration",
 		"geospatial",
-		"web-worker"
+		"web-worker",
+		"indexeddb",
+		"privacy-first",
+		"client-side",
+		"webgl",
+		"map",
+		"visualization"
 	],
-	"author": "",
-	"license": "MIT"
+	"files": [
+		"dist",
+		"public",
+		"README.md",
+		"LICENSE"
+	]
 }
