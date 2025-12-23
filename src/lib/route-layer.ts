@@ -44,7 +44,7 @@ export class RouteOverlayLayer {
 			lineColor: "#FF5722",
 			lineWidth: 4.5,
 			lineOpacity: 0.5,
-			showPrivate: false,
+			showPrivate: true,
 			imperialUnits: false,
 			privacyDistance: 0,
 			...options,

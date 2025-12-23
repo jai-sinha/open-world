@@ -9,6 +9,7 @@ import { createExplorationLayer, ExplorationCanvasLayer } from "./lib/canvas-lay
 import { createRouteOverlay, RouteOverlayLayer } from "./lib/route-layer";
 import { createControls, Controls } from "./ui/controls";
 import { createSidebar, Sidebar } from "./ui/sidebar";
+import { calculateViewportStats } from "./lib/stats";
 
 // Configuration
 let stravaClientId: string;
@@ -26,8 +27,8 @@ const APP_CONFIG = {
 		style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
 	},
 	processing: {
-		cellSize: 25,
-		samplingStep: 12.5,
+		cellSize: 50,
+		samplingStep: 25,
 		privacyDistance: 0,
 		snapToGrid: false,
 		skipPrivate: false,
@@ -94,6 +95,8 @@ class ExplorationMapApp {
 			}),
 			"top-right",
 		);
+
+		this.map.on("moveend", () => this.updateStatsUI());
 
 		this.explorationLayer = createExplorationLayer(this.map, {
 			id: "exploration-layer",
@@ -361,12 +364,20 @@ class ExplorationMapApp {
 
 	private updateStatsUI(cellCount?: number, rectCount?: number): void {
 		const cells = cellCount ?? this.visitedCells.size;
+		const viewportStats = this.calculateViewportStats();
+
 		this.controls?.updateStats({
 			cells,
 			activities: this.processedActivityIds.size,
 			rectangles: rectCount,
 			area: (cells * Math.pow(this.currentConfig.cellSize, 2)) / 1_000_000,
+			viewportExplored: viewportStats,
 		});
+	}
+
+	private calculateViewportStats(): number {
+		if (!this.map) return 0;
+		return calculateViewportStats(this.map, this.visitedCells, this.currentConfig.cellSize);
 	}
 
 	private setProcessingState(isProcessing: boolean): void {

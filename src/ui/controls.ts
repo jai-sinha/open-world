@@ -357,7 +357,7 @@ export class Controls {
 			"Grid Cell Size (m) (increase for better rendering performance):",
 			10,
 			100,
-			25,
+			50,
 			5,
 			(value) => this.updateConfig({ cellSize: value }),
 		);
@@ -369,7 +369,7 @@ export class Controls {
 			"Sampling Step (m) (increase for better rendering performance):",
 			5,
 			50,
-			12.5,
+			25,
 			2.5,
 			(value) => this.updateConfig({ samplingStep: value }),
 		);
@@ -408,6 +408,10 @@ export class Controls {
       <div class="stat-item">
         <span class="stat-label">Area Explored:</span>
         <span class="stat-value" id="stat-area">0 km²</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Roads Explored:</span>
+        <span class="stat-value" id="stat-viewport">0%</span>
       </div>
     `;
 		section.appendChild(this.statsContainer);
@@ -529,6 +533,7 @@ export class Controls {
 		activities?: number;
 		rectangles?: number;
 		area?: number;
+		viewportExplored?: number;
 	}): void {
 		if (!this.statsContainer) return;
 
@@ -558,6 +563,11 @@ export class Controls {
 					this.areaStatEl.textContent = `${stats.area.toFixed(2)} km²`;
 				}
 			}
+		}
+
+		if (stats.viewportExplored !== undefined) {
+			const el = this.statsContainer.querySelector("#stat-viewport");
+			if (el) el.textContent = `${stats.viewportExplored.toFixed(2)}%`;
 		}
 	}
 
