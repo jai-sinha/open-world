@@ -26,6 +26,7 @@ export class Controls {
 	private progressText?: HTMLElement;
 	private progressSection?: HTMLElement;
 	private statsContainer?: HTMLElement;
+	private cityStatsContainer?: HTMLElement;
 	private routeLegendContainer?: HTMLElement;
 	private routeLegendList?: HTMLElement;
 
@@ -61,6 +62,10 @@ export class Controls {
 		// Stats display
 		const statsSection = this.createStatsSection();
 		this.container.appendChild(statsSection);
+
+		// City Stats
+		const cityStatsSection = this.createCityStatsSection();
+		this.container.appendChild(cityStatsSection);
 
 		// Privacy settings
 		const privacySection = this.createPrivacySection();
@@ -363,6 +368,22 @@ export class Controls {
 		return section;
 	}
 
+	private createCityStatsSection(): HTMLElement {
+		const section = document.createElement("div");
+		section.className = "control-section city-stats-section";
+
+		const title = document.createElement("h3");
+		title.textContent = "Top Cities";
+		section.appendChild(title);
+
+		this.cityStatsContainer = document.createElement("div");
+		this.cityStatsContainer.className = "city-stats-content";
+		this.cityStatsContainer.innerHTML = '<div class="stat-item">Processing cities...</div>';
+		section.appendChild(this.cityStatsContainer);
+
+		return section;
+	}
+
 	/**
 	 * Create data management section
 	 */
@@ -510,12 +531,69 @@ export class Controls {
 			const el = this.statsContainer.querySelector("#stat-viewport");
 			if (el) {
 				if (stats.viewportExplored === -1) {
-					el.textContent = "Zoom in!";
+					el.textContent = "Zoom In";
 				} else {
 					el.textContent = `${stats.viewportExplored.toFixed(2)}%`;
 				}
 			}
 		}
+	}
+
+	updateCityStats(stats: any[]): void {
+		if (!this.cityStatsContainer) return;
+
+		if (stats.length === 0) {
+			this.cityStatsContainer.innerHTML = '<div class="stat-item">No cities found</div>';
+			return;
+		}
+
+		this.cityStatsContainer.innerHTML = "";
+		const list = document.createElement("div");
+		list.className = "city-list";
+		list.style.display = "flex";
+		list.style.flexDirection = "column";
+		list.style.gap = "8px";
+
+		stats.forEach((city) => {
+			const item = document.createElement("div");
+			item.className = "city-item";
+			item.style.display = "flex";
+			item.style.flexDirection = "column";
+			item.style.fontSize = "0.9em";
+
+			const header = document.createElement("div");
+			header.style.display = "flex";
+			header.style.justifyContent = "space-between";
+			header.style.marginBottom = "2px";
+
+			const name = document.createElement("span");
+			name.textContent = city.displayName.split(",")[0]; // Just city name
+			name.style.fontWeight = "500";
+
+			const pct = document.createElement("span");
+			pct.textContent = `${city.percentage.toFixed(1)}%`;
+
+			header.appendChild(name);
+			header.appendChild(pct);
+
+			const barBg = document.createElement("div");
+			barBg.style.height = "4px";
+			barBg.style.backgroundColor = "#eee";
+			barBg.style.borderRadius = "2px";
+			barBg.style.overflow = "hidden";
+
+			const barFill = document.createElement("div");
+			barFill.style.height = "100%";
+			barFill.style.width = `${city.percentage}%`;
+			barFill.style.backgroundColor = "#4CAF50";
+
+			barBg.appendChild(barFill);
+			item.appendChild(header);
+			item.appendChild(barBg);
+			list.appendChild(item);
+		});
+
+		this.cityStatsContainer.appendChild(list);
 	}
 
 	/**
@@ -554,13 +632,6 @@ export class Controls {
 			skipPrivateActivities: false,
 			...partial,
 		});
-	}
-
-	/**
-	 * Update processing config
-	 */
-	private updateConfig(partial: Partial<ProcessingConfig>): void {
-		this.options.onConfigChange?.(partial);
 	}
 
 	/**

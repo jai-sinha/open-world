@@ -24,9 +24,11 @@
 		"check": "bun run scripts/check-setup.ts"
 	},
 	"dependencies": {
-		"maplibre-gl": "^4.1.2",
 		"@mapbox/polyline": "^1.2.1",
-		"idb": "^8.0.0"
+		"@turf/boolean-point-in-polygon": "^7.3.1",
+		"@turf/helpers": "^7.3.1",
+		"idb": "^8.0.0",
+		"maplibre-gl": "^4.1.2"
 	},
 	"devDependencies": {
 		"@types/mapbox__polyline": "^1.0.5",

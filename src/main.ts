@@ -10,6 +10,7 @@ import { createRouteOverlay, RouteOverlayLayer } from "./lib/route-layer";
 import { createControls, Controls } from "./ui/controls";
 import { createSidebar, Sidebar } from "./ui/sidebar";
 import { calculateViewportStats } from "./lib/stats";
+import { CityManager } from "./lib/geocoding/city-manager";
 
 // Configuration
 let stravaClientId: string;
@@ -44,6 +45,7 @@ class ExplorationMapApp {
 	private sidebar?: Sidebar;
 	private explorationLayer?: ExplorationCanvasLayer;
 	private routeLayer?: RouteOverlayLayer;
+	private cityManager?: CityManager;
 
 	// State
 	private visitedCells = new Set<string>();
@@ -62,6 +64,9 @@ class ExplorationMapApp {
 		await this.initializeMap();
 		this.initializeWorker();
 		this.initializeControls();
+
+		this.cityManager = new CityManager(this.visitedCells, this.currentConfig.cellSize);
+
 		await this.loadSavedState();
 
 		this.handleAuthCallback();
@@ -180,6 +185,13 @@ class ExplorationMapApp {
 				},
 			});
 
+			this.cityManager?.updateVisitedCells(this.visitedCells);
+			if (this.allActivities.length > 0) {
+				this.cityManager?.discoverCitiesFromActivities(this.allActivities).then((stats) => {
+					this.controls?.updateCityStats(stats);
+				});
+			}
+
 			// Request initial render
 			if (this.explorationLayer) {
 				this.sendWorkerMessage({ type: "process", data: { activities: [] } });
@@ -266,6 +278,10 @@ class ExplorationMapApp {
 			this.routeLayer?.setActivities(activities);
 			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
+			this.cityManager?.discoverCitiesFromActivities(activities).then((stats) => {
+				this.controls?.updateCityStats(stats);
+			});
+
 			// Sync worker with full list
 			this.sendWorkerMessage({ type: "init", data: { activities } });
 			await this.saveCurrentState();
@@ -349,7 +365,13 @@ class ExplorationMapApp {
 	}
 
 	private updateMapAndState(data: any): void {
-		if (data.visitedCells) this.visitedCells = new Set(data.visitedCells);
+		if (data.visitedCells) {
+			this.visitedCells = new Set(data.visitedCells);
+			this.cityManager?.updateVisitedCells(this.visitedCells);
+			if (this.cityManager) {
+				this.controls?.updateCityStats(this.cityManager.getStats());
+			}
+		}
 		if (data.processedActivityIds) this.processedActivityIds = new Set(data.processedActivityIds);
 		if (data.rectangles && this.explorationLayer) {
 			this.explorationLayer.setRectangles(data.rectangles);
@@ -413,6 +435,12 @@ class ExplorationMapApp {
 		this.currentConfig = { ...this.currentConfig, ...config };
 		if (config.cellSize && this.explorationLayer) {
 			this.explorationLayer.setCellSize(config.cellSize);
+			this.cityManager = new CityManager(this.visitedCells, this.currentConfig.cellSize);
+			if (this.allActivities.length > 0) {
+				this.cityManager
+					.discoverCitiesFromActivities(this.allActivities)
+					.then((stats) => this.controls?.updateCityStats(stats));
+			}
 		}
 		this.sendWorkerMessage({ type: "updateConfig", data: this.currentConfig });
 	}
