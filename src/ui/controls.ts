@@ -58,7 +58,9 @@ export class Controls {
 		const progressSection = this.createProgressSection();
 		this.container.appendChild(progressSection);
 
-		// Control buttons removed (pause/cancel removed; Clear Data functionality removed from UI)
+		// Stats display
+		const statsSection = this.createStatsSection();
+		this.container.appendChild(statsSection);
 
 		// Privacy settings
 		const privacySection = this.createPrivacySection();
@@ -71,10 +73,6 @@ export class Controls {
 		// Advanced settings
 		const advancedSection = this.createAdvancedSection();
 		this.container.appendChild(advancedSection);
-
-		// Stats display
-		const statsSection = this.createStatsSection();
-		this.container.appendChild(statsSection);
 
 		// Apply initial processing state (hide progress section if not processing)
 		this.setProcessing(this.isProcessing);
@@ -308,7 +306,7 @@ export class Controls {
 		// Privacy toggle
 		const privacyToggle = this.createCheckbox(
 			"privacy-enabled",
-			"Enable Privacy Filter (remove first & last 400m)",
+			"Hide Route Start/Finish",
 			false,
 			(checked) => this.updatePrivacy({ enabled: checked }),
 		);
@@ -406,11 +404,11 @@ export class Controls {
         <span class="stat-value" id="stat-rectangles">0</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">Area Explored:</span>
+        <span class="stat-label">Total Area Explored:</span>
         <span class="stat-value" id="stat-area">0 km²</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">Roads Explored:</span>
+        <span class="stat-label">Current Window Exploration:</span>
         <span class="stat-value" id="stat-viewport">0%</span>
       </div>
     `;
@@ -567,7 +565,13 @@ export class Controls {
 
 		if (stats.viewportExplored !== undefined) {
 			const el = this.statsContainer.querySelector("#stat-viewport");
-			if (el) el.textContent = `${stats.viewportExplored.toFixed(2)}%`;
+			if (el) {
+				if (stats.viewportExplored === -1) {
+					el.textContent = "Zoom in!";
+				} else {
+					el.textContent = `${stats.viewportExplored.toFixed(2)}%`;
+				}
+			}
 		}
 	}
 
@@ -592,12 +596,6 @@ export class Controls {
 			}
 		}
 	}
-
-	// Pause/resume functionality removed
-
-	// Cancel handler removed (UI no longer exposes cancel button)
-
-	// Clear handled at top-level auth area now
 
 	/**
 	 * Handle import

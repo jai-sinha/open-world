@@ -22,8 +22,8 @@ let isProcessing = false;
 let pendingReprocess = false;
 
 let currentConfig: ProcessingConfig = {
-	cellSize: 25,
-	samplingStep: 12.5,
+	cellSize: 50,
+	samplingStep: 25,
 	privacyDistance: 100,
 	snapToGrid: false,
 	skipPrivate: false,

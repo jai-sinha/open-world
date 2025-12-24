@@ -13,7 +13,7 @@ import { latLngToMeters, pointToCell, cellKey, parseCellKey } from "./projection
  * @param map The MapLibre map instance
  * @param visitedCells Set of visited cell keys ("x,y")
  * @param cellSize Grid cell size in meters
- * @returns Percentage of roads explored (0-100)
+ * @returns Percentage of roads explored (0-100), or -1 if viewport is too large
  */
 export function calculateViewportStats(
 	map: MapLibreMap,
@@ -33,6 +33,14 @@ export function calculateViewportStats(
 	const maxX = Math.max(swMeters.x, neMeters.x);
 	const minY = Math.min(swMeters.y, neMeters.y);
 	const maxY = Math.max(swMeters.y, neMeters.y);
+
+	// Performance check: if viewport is too large, skip calculation
+	// 2m cells is roughly a 50km x 50km area with 50m cells
+	const minCell = pointToCell(minX, minY, cellSize);
+	const maxCell = pointToCell(maxX, maxY, cellSize);
+	const cellCount = Math.abs((maxCell.x - minCell.x) * (maxCell.y - minCell.y));
+
+	if (cellCount > 2_000_000) return -1;
 
 	// Get visible features
 	const canvas = map.getCanvas();

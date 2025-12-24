@@ -193,7 +193,7 @@ export function createExplorationLayer(
 ): ExplorationCanvasLayer {
 	const layer = new ExplorationCanvasLayer({
 		id: "exploration-layer",
-		cellSize: 25,
+		cellSize: 50,
 		fillColor: "#4CAF50",
 		fillOpacity: 0.3,
 		...options,

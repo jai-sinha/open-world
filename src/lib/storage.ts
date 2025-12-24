@@ -181,9 +181,9 @@ export async function mergeCells(
 				newCells,
 				newActivityIds,
 				{
-					cellSize: 25,
-					samplingStep: 12.5,
-					privacyDistance: 100,
+					cellSize: 50,
+					samplingStep: 25,
+					privacyDistance: 0,
 					snapToGrid: false,
 					skipPrivate: false,
 				},
