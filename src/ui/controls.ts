@@ -70,10 +70,6 @@ export class Controls {
 		const routeSection = this.createRouteSection();
 		this.container.appendChild(routeSection);
 
-		// Advanced settings
-		const advancedSection = this.createAdvancedSection();
-		this.container.appendChild(advancedSection);
-
 		// Apply initial processing state (hide progress section if not processing)
 		this.setProcessing(this.isProcessing);
 	}
@@ -321,59 +317,6 @@ export class Controls {
 		);
 		section.appendChild(skipPrivate);
 
-		return section;
-	}
-
-	/**
-	 * Create advanced settings section
-	 */
-	private createAdvancedSection(): HTMLElement {
-		const section = document.createElement("div");
-		section.className = "control-section advanced-section collapsed";
-
-		const header = document.createElement("div");
-		header.className = "section-header";
-		header.onclick = () => section.classList.toggle("collapsed");
-
-		const title = document.createElement("h3");
-		title.textContent = "Advanced Settings";
-		header.appendChild(title);
-
-		const toggle = document.createElement("span");
-		toggle.className = "toggle-icon";
-		toggle.textContent = "▼";
-		header.appendChild(toggle);
-
-		section.appendChild(header);
-
-		const content = document.createElement("div");
-		content.className = "section-content";
-
-		// Cell size selector
-		const cellSizeControl = this.createRangeControl(
-			"cell-size",
-			"Grid Cell Size (m) (increase for better rendering performance):",
-			10,
-			100,
-			50,
-			5,
-			(value) => this.updateConfig({ cellSize: value }),
-		);
-		content.appendChild(cellSizeControl);
-
-		// Sampling step selector
-		const samplingControl = this.createRangeControl(
-			"sampling-step",
-			"Sampling Step (m) (increase for better rendering performance):",
-			5,
-			50,
-			25,
-			2.5,
-			(value) => this.updateConfig({ samplingStep: value }),
-		);
-		content.appendChild(samplingControl);
-
-		section.appendChild(content);
 		return section;
 	}
 
