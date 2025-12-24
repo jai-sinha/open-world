@@ -11,14 +11,15 @@ A client-side MapLibre-based exploration map that visualizes all your Strava act
 - **Privacy Controls**: Remove start/finishes, skip private activities
 - **Responsive UX**: Prioritize viewport activities
 - **Beautiful Visualization**: MapLibre GL canvas layer for smooth, high-performance rendering
-- **Interactivity**: Hover a route to see its details, or click it to open a sidebar with even more information
+- **Interactivity**: Hover a route to see details, or click it to open a sidebar with even more information
+- **Stat Tracking**: See your percentage of explored roads and paths in any area
 
 ## Grid/Bitset Algorithm
 
 1. **Decode Polyline**: Convert Strava's encoded polyline to lat/lng points
-2. **Sample Points**: Sample every ~12.5m along the route
+2. **Sample Points**: Sample every ~25m along the route
 3. **Project to Meters**: Convert lat/lng to Web Mercator (EPSG:3857)
-4. **Mark Grid Cells**: Divide into grid cells (default 25m×25m), mark visited
+4. **Mark Grid Cells**: Divide into grid cells (default 50m×50m), mark visited
 5. **Merge Rectangles**: Combine contiguous cells into larger rectangles
 6. **Render**: Draw rectangles on canvas overlay (fast) or GeoJSON (fallback)
 
