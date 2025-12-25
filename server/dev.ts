@@ -202,10 +202,16 @@ const _server = Bun.serve({
 				}
 			}
 
-			// Serve any file under /dist or /worker directories
-			if (path.startsWith("/dist/") || path.startsWith("/worker/")) {
+			// Serve any file under /dist, /worker, or /data directories
+			if (path.startsWith("/dist/") || path.startsWith("/worker/") || path.startsWith("/data/")) {
 				// Map /worker/ requests to ./dist/worker/ since that's where the build output goes
-				const fpath = path.startsWith("/worker/") ? "./dist" + path : "." + path;
+				// Map /data/ requests to ./dist/data/ for city boundaries bundle
+				let fpath = "." + path;
+				if (path.startsWith("/worker/")) {
+					fpath = "./dist" + path;
+				} else if (path.startsWith("/data/")) {
+					fpath = "./dist" + path;
+				}
 				try {
 					const f = Bun.file(fpath);
 					if (await f.exists()) {
@@ -216,6 +222,7 @@ const _server = Bun.serve({
 							css: "text/css",
 							html: "text/html",
 							json: "application/json",
+							gz: "application/gzip",
 						};
 						return new Response(f, {
 							headers: { "Content-Type": mimes[ext] || "application/octet-stream" },

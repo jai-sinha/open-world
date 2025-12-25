@@ -259,7 +259,7 @@ export class CityManager {
 			}
 		}
 
-		// Return top 10 by percentage
-		return stats.sort((a, b) => b.percentage - a.percentage).slice(0, 10);
+		// Return top 20 by percentage
+		return stats.sort((a, b) => b.percentage - a.percentage).slice(0, 20);
 	}
 }
