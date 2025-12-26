@@ -1,6 +1,107 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { latLngToMeters, pointToCell, cellKey, parseCellKey } from "./projection";
 
+// ============ Core visited cell metrics ============
+
+export function computeVisitedCountForCells(
+	targetCells: Set<string>,
+	visitedCells: Set<string>,
+): number {
+	if (targetCells.size === 0) return 0;
+	let visited = 0;
+	for (const cell of targetCells) {
+		if (visitedCells.has(cell)) {
+			visited++;
+			continue;
+		}
+		const { x, y } = parseCellKey(cell);
+		let found = false;
+		for (let dx = -1; dx <= 1; dx++) {
+			for (let dy = -1; dy <= 1; dy++) {
+				if (dx === 0 && dy === 0) continue;
+				if (visitedCells.has(cellKey(x + dx, y + dy))) {
+					found = true;
+					break;
+				}
+			}
+			if (found) break;
+		}
+		if (found) visited++;
+	}
+	return visited;
+}
+
+export function computeVisitedPercentageForCells(
+	targetCells: Set<string>,
+	visitedCells: Set<string>,
+): number {
+	const visited = computeVisitedCountForCells(targetCells, visitedCells);
+	return targetCells.size === 0 ? 0 : (visited / targetCells.size) * 100;
+}
+
+// ============ Viewport road stats ============
+
+function buildRoadCellsInViewport(
+	map: MapLibreMap,
+	cellSize: number,
+	minX: number,
+	maxX: number,
+	minY: number,
+	maxY: number,
+): Set<string> {
+	const canvas = map.getCanvas();
+	const features = map.queryRenderedFeatures(
+		[
+			[0, 0],
+			[canvas.width, canvas.height],
+		],
+		{},
+	);
+
+	const roadCells = new Set<string>();
+	const isRoadLayer = (id: string) => {
+		const lower = id.toLowerCase();
+		return (
+			lower.includes("road") ||
+			lower.includes("highway") ||
+			lower.includes("transportation") ||
+			lower.includes("tunnel") ||
+			lower.includes("bridge")
+		);
+	};
+
+	for (const feature of features) {
+		if (!isRoadLayer(feature.layer.id)) continue;
+		if (feature.geometry.type !== "LineString" && feature.geometry.type !== "MultiLineString")
+			continue;
+
+		const geometry = feature.geometry as any;
+		const coordsList = geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
+
+		for (const coords of coordsList) {
+			for (let i = 0; i < coords.length - 1; i++) {
+				const [lng1, lat1] = coords[i] as [number, number];
+				const [lng2, lat2] = coords[i + 1] as [number, number];
+				const p1 = latLngToMeters(lat1, lng1);
+				const p2 = latLngToMeters(lat2, lng2);
+				const dx = p2.x - p1.x;
+				const dy = p2.y - p1.y;
+				const dist = Math.sqrt(dx * dx + dy * dy);
+				const steps = Math.ceil(dist / (cellSize / 2));
+				for (let s = 0; s <= steps; s++) {
+					const t = steps === 0 ? 0 : s / steps;
+					const x = p1.x + dx * t;
+					const y = p1.y + dy * t;
+					if (x < minX || x > maxX || y < minY || y > maxY) continue;
+					const cell = pointToCell(x, y, cellSize);
+					roadCells.add(cellKey(cell.x, cell.y));
+				}
+			}
+		}
+	}
+	return roadCells;
+}
+
 /**
  * Calculate the percentage of visible roads that have been explored.
  *
@@ -22,115 +123,52 @@ export function calculateViewportStats(
 ): number {
 	if (!map) return 0;
 
-	// Get viewport bounds in meters for clipping
 	const bounds = map.getBounds();
 	const ne = bounds.getNorthEast();
 	const sw = bounds.getSouthWest();
 	const neMeters = latLngToMeters(ne.lat, ne.lng);
 	const swMeters = latLngToMeters(sw.lat, sw.lng);
-
 	const minX = Math.min(swMeters.x, neMeters.x);
 	const maxX = Math.max(swMeters.x, neMeters.x);
 	const minY = Math.min(swMeters.y, neMeters.y);
 	const maxY = Math.max(swMeters.y, neMeters.y);
 
-	// Performance check: if viewport is too large, skip calculation
-	// 2m cells is roughly a 50km x 50km area with 50m cells
 	const minCell = pointToCell(minX, minY, cellSize);
 	const maxCell = pointToCell(maxX, maxY, cellSize);
 	const cellCount = Math.abs((maxCell.x - minCell.x) * (maxCell.y - minCell.y));
-
 	if (cellCount > 2_000_000) return -1;
 
-	// Get visible features
-	const canvas = map.getCanvas();
-	const features = map.queryRenderedFeatures(
-		[
-			[0, 0],
-			[canvas.width, canvas.height],
-		],
-		{},
-	);
-
-	const roadCells = new Set<string>();
-
-	// Heuristic to identify road layers in standard styles (like Carto, Mapbox, etc.)
-	const isRoadLayer = (id: string) => {
-		const lower = id.toLowerCase();
-		return (
-			lower.includes("road") ||
-			lower.includes("highway") ||
-			lower.includes("transportation") ||
-			lower.includes("tunnel") ||
-			lower.includes("bridge")
-		);
-	};
-
-	for (const feature of features) {
-		if (!isRoadLayer(feature.layer.id)) continue;
-		if (feature.geometry.type !== "LineString" && feature.geometry.type !== "MultiLineString")
-			continue;
-
-		const geometry = feature.geometry as any;
-		const coordsList =
-			geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
-
-		for (const coords of coordsList) {
-			// coords is Array<[lng, lat]>
-			for (let i = 0; i < coords.length - 1; i++) {
-				const [lng1, lat1] = coords[i] as [number, number];
-				const [lng2, lat2] = coords[i + 1] as [number, number];
-
-				const p1 = latLngToMeters(lat1, lng1);
-				const p2 = latLngToMeters(lat2, lng2);
-
-				// Interpolate to find all grid cells touched by this segment
-				const dx = p2.x - p1.x;
-				const dy = p2.y - p1.y;
-				const dist = Math.sqrt(dx * dx + dy * dy);
-
-				// Step size: half cell size ensures we don't skip cells
-				const steps = Math.ceil(dist / (cellSize / 2));
-
-				for (let s = 0; s <= steps; s++) {
-					const t = steps === 0 ? 0 : s / steps;
-					const x = p1.x + dx * t;
-					const y = p1.y + dy * t;
-
-					// Clip to viewport
-					if (x < minX || x > maxX || y < minY || y > maxY) continue;
-
-					const cell = pointToCell(x, y, cellSize);
-					roadCells.add(cellKey(cell.x, cell.y));
-				}
-			}
-		}
-	}
-
+	const roadCells = buildRoadCellsInViewport(map, cellSize, minX, maxX, minY, maxY);
 	if (roadCells.size === 0) return 0;
+	return computeVisitedPercentageForCells(roadCells, visitedCells);
+}
 
-	let visitedRoadCells = 0;
-	for (const cell of roadCells) {
-		if (visitedCells.has(cell)) {
-			visitedRoadCells++;
-		} else {
-			// Fuzzy match: check neighbors (3x3 grid)
-			// This handles GPS drift or slight misalignment between map roads and activity tracks
-			const { x, y } = parseCellKey(cell);
-			let found = false;
-			for (let dx = -1; dx <= 1; dx++) {
-				for (let dy = -1; dy <= 1; dy++) {
-					if (dx === 0 && dy === 0) continue;
-					if (visitedCells.has(cellKey(x + dx, y + dy))) {
-						found = true;
-						break;
-					}
-				}
-				if (found) break;
-			}
-			if (found) visitedRoadCells++;
+// ============ City stats ============
+
+import type { City } from "./geocoding/city-manager";
+import type { CityStats } from "./geocoding/city-manager";
+
+export function computeCityStats(
+	cities: Iterable<City>,
+	visitedCells: Set<string>,
+): CityStats[] {
+	const stats: CityStats[] = [];
+	for (const city of cities) {
+		// Only show stats if road cells are computed
+		if (city.roadCells === null) continue;
+
+		const visitedCount = computeVisitedCountForCells(city.roadCells, visitedCells);
+
+		if (city.roadCells.size > 0) {
+			stats.push({
+				cityId: city.id,
+				displayName: city.displayName,
+				totalCells: city.roadCells.size,
+				visitedCount,
+				percentage: city.roadCells.size === 0 ? 0 : (visitedCount / city.roadCells.size) * 100,
+				source: city.source,
+			});
 		}
 	}
-
-	return (visitedRoadCells / roadCells.size) * 100;
+	return stats.sort((a, b) => b.percentage - a.percentage).slice(0, 20);
 }

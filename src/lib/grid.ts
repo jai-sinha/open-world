@@ -2,7 +2,7 @@
 // This is the core algorithm for efficient exploration visualization
 
 import type { GridCell, Rectangle } from "../types";
-import { cellKey, parseCellKey } from "./projection";
+import { cellKey, parseCellKey, getCellBounds } from "./projection";
 
 /**
  * Merge contiguous cells into rectangles for efficient rendering
@@ -160,7 +160,7 @@ export interface GridStats {
 }
 
 export function computeGridStats(cells: Set<string>, rectangles: Rectangle[]): GridStats {
-	const bounds = getCellBoundsFromSet(cells);
+	const bounds = getCellBounds(cells);
 
 	return {
 		totalCells: cells.size,
@@ -169,28 +169,4 @@ export function computeGridStats(cells: Set<string>, rectangles: Rectangle[]): G
 		compressionRatio: rectangles.length / Math.max(cells.size, 1),
 		bounds,
 	};
-}
-
-function getCellBoundsFromSet(cells: Set<string>): {
-	minX: number;
-	minY: number;
-	maxX: number;
-	maxY: number;
-} | null {
-	if (cells.size === 0) return null;
-
-	let minX = Infinity;
-	let minY = Infinity;
-	let maxX = -Infinity;
-	let maxY = -Infinity;
-
-	for (const key of cells) {
-		const { x, y } = parseCellKey(key);
-		minX = Math.min(minX, x);
-		minY = Math.min(minY, y);
-		maxX = Math.max(maxX, x);
-		maxY = Math.max(maxY, y);
-	}
-
-	return { minX, minY, maxX, maxY };
 }

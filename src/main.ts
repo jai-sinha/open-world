@@ -11,6 +11,7 @@ import { createControls, Controls } from "./ui/controls";
 import { createSidebar, Sidebar } from "./ui/sidebar";
 import { calculateViewportStats } from "./lib/stats";
 import { CityManager } from "./lib/geocoding/city-manager";
+import { setRoadPMTilesURL } from "./lib/tiles";
 
 // Configuration
 let stravaClientId: string;
@@ -76,6 +77,7 @@ class ExplorationMapApp {
 		const res = await fetch("/api/config");
 		const config = await res.json();
 		stravaClientId = config.STRAVA_CLIENT_ID;
+		if (config.ROAD_PM_TILES_URL) setRoadPMTilesURL(config.ROAD_PM_TILES_URL);
 	}
 
 	private async initializeMap(): Promise<void> {

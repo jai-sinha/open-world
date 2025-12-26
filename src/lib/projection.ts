@@ -63,6 +63,49 @@ export function parseCellKey(key: string): { x: number; y: number } {
 	return { x, y };
 }
 
+// Rasterize a Polygon/MultiPolygon feature into grid cells
+import type { Feature, Polygon, MultiPolygon, Position } from "geojson";
+import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
+import { point } from "@turf/helpers";
+export function rasterizePolygon(feature: Feature<Polygon | MultiPolygon>, cellSize: number): Set<string> {
+	const cells = new Set<string>();
+	let minLat = 90,
+		maxLat = -90,
+		minLng = 180,
+		maxLng = -180;
+	const processCoords = (coords: Position[][]) => {
+		for (const ring of coords) {
+			for (const [lng, lat] of ring) {
+				minLat = Math.min(minLat, lat);
+				maxLat = Math.max(maxLat, lat);
+				minLng = Math.min(minLng, lng);
+				maxLng = Math.max(maxLng, lng);
+			}
+		}
+	};
+	if (feature.geometry.type === "Polygon") {
+		processCoords(feature.geometry.coordinates);
+	} else if (feature.geometry.type === "MultiPolygon") {
+		for (const poly of feature.geometry.coordinates) {
+			processCoords(poly);
+		}
+	}
+	const sw = latLngToMeters(minLat, minLng);
+	const ne = latLngToMeters(maxLat, maxLng);
+	const minCell = pointToCell(sw.x, sw.y, cellSize);
+	const maxCell = pointToCell(ne.x, ne.y, cellSize);
+	for (let x = minCell.x; x <= maxCell.x; x++) {
+		for (let y = minCell.y; y <= maxCell.y; y++) {
+			const centerMeters = cellToPoint(x, y, cellSize);
+			const centerLatLng = metersToLatLng(centerMeters.x, centerMeters.y);
+			if (booleanPointInPolygon(point([centerLatLng.lng, centerLatLng.lat]), feature)) {
+				cells.add(cellKey(x, y));
+			}
+		}
+	}
+	return cells;
+}
+
 /**
  * Calculate distance between two lat/lng points in meters (Haversine)
  */
