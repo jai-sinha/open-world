@@ -30,6 +30,10 @@ export class CityManager {
 	private isProcessing = false;
 	private bundleLoaded = false;
 
+	// Discovery progress tracking (number of unique locations being processed)
+	private discoveryTotal = 0;
+	private discoveryProcessed = 0;
+
 	constructor(visitedCells: Set<string>, cellSize: number) {
 		this.visitedCells = visitedCells;
 		this.cellSize = cellSize;
@@ -52,9 +56,14 @@ export class CityManager {
 		this.visitedCells = cells;
 	}
 
-	public async discoverCitiesFromActivities(activities: StravaActivity[]): Promise<CityStats[]> {
+	public async discoverCitiesFromActivities(
+		activities: StravaActivity[],
+		onProgress?: (processed: number, total: number) => void,
+	): Promise<CityStats[]> {
 		if (this.isProcessing) return this.getStats();
 		this.isProcessing = true;
+		this.discoveryProcessed = 0;
+		this.discoveryTotal = 0;
 
 		try {
 			// Ensure bundle is loaded
@@ -76,15 +85,42 @@ export class CityManager {
 
 			// Process locations to find new cities
 			const uniqueLocations = Array.from(locations.values());
+			this.discoveryTotal = uniqueLocations.length;
 
-			// Process in chunks
+			// Notify UI listeners that discovery is starting
+			if (typeof window !== "undefined") {
+				window.dispatchEvent(
+					new CustomEvent("city-discovery-start", { detail: { total: this.discoveryTotal } }),
+				);
+			}
+
+			// Process each location and report progress after each one finishes
 			for (const [lat, lng] of uniqueLocations) {
 				await this.identifyCity(lat, lng);
+
+				// update progress counters and notify listeners
+				this.discoveryProcessed++;
+				onProgress?.(this.discoveryProcessed, this.discoveryTotal);
+
+				if (typeof window !== "undefined") {
+					window.dispatchEvent(
+						new CustomEvent("city-discovery-progress", {
+							detail: { processed: this.discoveryProcessed, total: this.discoveryTotal },
+						}),
+					);
+				}
 			}
 
 			return this.getStats();
 		} finally {
 			this.isProcessing = false;
+
+			// Dispatch completion event with final stats
+			if (typeof window !== "undefined") {
+				window.dispatchEvent(
+					new CustomEvent("city-discovery-complete", { detail: { stats: this.getStats() } }),
+				);
+			}
 		}
 	}
 
@@ -235,6 +271,22 @@ export class CityManager {
 	}
 
 	public getStats(): CityStats[] {
+		// While city discovery is running, return a single "progress" stat
+		// so UI can show a simple progress bar instead of partial/incomplete city data.
+		if (this.isProcessing) {
+			return [
+				{
+					cityId: "processing",
+					displayName: "Processing cities...",
+					totalCells: this.discoveryTotal,
+					visitedCount: this.discoveryProcessed,
+					percentage:
+						this.discoveryTotal > 0 ? (this.discoveryProcessed / this.discoveryTotal) * 100 : 0,
+					source: "bundle",
+				},
+			];
+		}
+
 		const stats: CityStats[] = [];
 
 		for (const city of this.cities.values()) {
@@ -261,5 +313,9 @@ export class CityManager {
 
 		// Return top 20 by percentage
 		return stats.sort((a, b) => b.percentage - a.percentage).slice(0, 20);
+	}
+
+	public getDiscoveryProgress(): { processed: number; total: number } {
+		return { processed: this.discoveryProcessed, total: this.discoveryTotal };
 	}
 }

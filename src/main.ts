@@ -187,9 +187,13 @@ class ExplorationMapApp {
 
 			this.cityManager?.updateVisitedCells(this.visitedCells);
 			if (this.allActivities.length > 0) {
-				this.cityManager?.discoverCitiesFromActivities(this.allActivities).then((stats) => {
-					this.controls?.updateCityStats(stats);
-				});
+				this.cityManager
+					?.discoverCitiesFromActivities(this.allActivities, (processed, total) => {
+						this.controls?.showCityProcessing(processed, total);
+					})
+					.then((stats) => {
+						this.controls?.updateCityStats(stats);
+					});
 			}
 
 			// Request initial render
@@ -278,9 +282,13 @@ class ExplorationMapApp {
 			this.routeLayer?.setActivities(activities);
 			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
-			this.cityManager?.discoverCitiesFromActivities(activities).then((stats) => {
-				this.controls?.updateCityStats(stats);
-			});
+			this.cityManager
+				?.discoverCitiesFromActivities(activities, (processed, total) => {
+					this.controls?.showCityProcessing(processed, total);
+				})
+				.then((stats) => {
+					this.controls?.updateCityStats(stats);
+				});
 
 			// Sync worker with full list
 			this.sendWorkerMessage({ type: "init", data: { activities } });
@@ -438,7 +446,9 @@ class ExplorationMapApp {
 			this.cityManager = new CityManager(this.visitedCells, this.currentConfig.cellSize);
 			if (this.allActivities.length > 0) {
 				this.cityManager
-					.discoverCitiesFromActivities(this.allActivities)
+					.discoverCitiesFromActivities(this.allActivities, (processed, total) =>
+						this.controls?.showCityProcessing(processed, total),
+					)
 					.then((stats) => this.controls?.updateCityStats(stats));
 			}
 		}

@@ -30,6 +30,17 @@ export class Controls {
 	private routeLegendContainer?: HTMLElement;
 	private routeLegendList?: HTMLElement;
 
+	// City discovery progress UI
+	private cityProcessingBarFill?: HTMLElement;
+	private cityProcessingBarBg?: HTMLElement;
+	private cityProcessingText?: HTMLElement;
+	private isCityProcessing = false;
+
+	// Event handlers for city discovery events (bound so they can be removed on destroy)
+	private cityDiscoveryStartHandler?: (e: Event) => void;
+	private cityDiscoveryProgressHandler?: (e: Event) => void;
+	private cityDiscoveryCompleteHandler?: (e: Event) => void;
+
 	// Unit-related state and references for updating displayed units
 	private imperialUnits = false;
 	private privacyDistanceInput?: HTMLInputElement;
@@ -66,6 +77,28 @@ export class Controls {
 		// City Stats
 		const cityStatsSection = this.createCityStatsSection();
 		this.container.appendChild(cityStatsSection);
+
+		// Attach listeners to show city discovery progress in the City Stats panel
+		// (CityManager dispatches CustomEvents during discovery)
+		if (typeof window !== "undefined") {
+			this.cityDiscoveryStartHandler = (e: Event) => {
+				const evt = e as CustomEvent<{ total: number }>;
+				this.showCityProcessing(0, evt.detail.total);
+			};
+			this.cityDiscoveryProgressHandler = (e: Event) => {
+				const evt = e as CustomEvent<{ processed: number; total: number }>;
+				this.showCityProcessing(evt.detail.processed, evt.detail.total);
+			};
+			this.cityDiscoveryCompleteHandler = (e: Event) => {
+				const evt = e as CustomEvent<{ stats: any[] }>;
+				this.isCityProcessing = false;
+				if (evt.detail?.stats) this.updateCityStats(evt.detail.stats);
+			};
+
+			window.addEventListener("city-discovery-start", this.cityDiscoveryStartHandler);
+			window.addEventListener("city-discovery-progress", this.cityDiscoveryProgressHandler);
+			window.addEventListener("city-discovery-complete", this.cityDiscoveryCompleteHandler);
+		}
 
 		// Privacy settings
 		const privacySection = this.createPrivacySection();
@@ -488,6 +521,64 @@ export class Controls {
 	}
 
 	/**
+	 * Show city discovery progress in the City Stats panel.
+	 * Replaces the city list while discovery is ongoing, showing a simple green bar.
+	 */
+	showCityProcessing(current: number, total: number): void {
+		if (!this.cityStatsContainer) return;
+
+		// If no cities to process, show empty message
+		if (total === 0) {
+			this.isCityProcessing = false;
+			this.cityStatsContainer.innerHTML = '<div class="stat-item">No cities found</div>';
+			return;
+		}
+
+		// When finished or current >= total, clear processing flag and let callers update final stats
+		if (current >= total) {
+			this.isCityProcessing = false;
+			return;
+		}
+
+		this.isCityProcessing = true;
+
+		// Create the UI if not already present
+		if (!this.cityProcessingText || !this.cityProcessingBarBg || !this.cityProcessingBarFill) {
+			this.cityStatsContainer.innerHTML = "";
+			const text = document.createElement("div");
+			text.className = "city-processing-text";
+			this.cityProcessingText = text;
+
+			const barBg = document.createElement("div");
+			barBg.style.height = "8px";
+			barBg.style.backgroundColor = "#eee";
+			barBg.style.borderRadius = "4px";
+			barBg.style.overflow = "hidden";
+			barBg.style.marginTop = "6px";
+
+			const barFill = document.createElement("div");
+			barFill.style.height = "100%";
+			barFill.style.width = "0%";
+			barFill.style.backgroundColor = "#4CAF50";
+			barFill.style.transition = "width 0.15s linear";
+
+			barBg.appendChild(barFill);
+
+			this.cityProcessingBarBg = barBg;
+			this.cityProcessingBarFill = barFill;
+
+			this.cityStatsContainer.appendChild(this.cityProcessingText);
+			this.cityStatsContainer.appendChild(barBg);
+		}
+
+		this.cityProcessingText.textContent = `Processing cities: ${current} / ${total}`;
+		const pct = total > 0 ? (current / total) * 100 : 0;
+		if (this.cityProcessingBarFill) {
+			this.cityProcessingBarFill.style.width = `${pct}%`;
+		}
+	}
+
+	/**
 	 * Update stats display
 	 */
 	updateStats(stats: {
@@ -541,6 +632,15 @@ export class Controls {
 
 	updateCityStats(stats: any[]): void {
 		if (!this.cityStatsContainer) return;
+
+		// If discovery is ongoing, prefer the progress UI and avoid showing incomplete data
+		if (this.isCityProcessing) return;
+
+		// Handle discovery sentinel (CityManager may return a progress stat while discovering)
+		if (stats.length === 1 && stats[0].cityId === "processing") {
+			this.showCityProcessing(stats[0].visitedCount, stats[0].totalCells);
+			return;
+		}
 
 		if (stats.length === 0) {
 			this.cityStatsContainer.innerHTML = '<div class="stat-item">No cities found</div>';
@@ -747,6 +847,16 @@ export class Controls {
 	 * Destroy controls
 	 */
 	destroy(): void {
+		// Remove any attached city discovery event listeners
+		if (typeof window !== "undefined") {
+			if (this.cityDiscoveryStartHandler)
+				window.removeEventListener("city-discovery-start", this.cityDiscoveryStartHandler);
+			if (this.cityDiscoveryProgressHandler)
+				window.removeEventListener("city-discovery-progress", this.cityDiscoveryProgressHandler);
+			if (this.cityDiscoveryCompleteHandler)
+				window.removeEventListener("city-discovery-complete", this.cityDiscoveryCompleteHandler);
+		}
+
 		this.container.innerHTML = "";
 	}
 }
