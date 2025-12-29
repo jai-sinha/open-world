@@ -422,7 +422,14 @@ class CityProcessor {
 				pmtiles,
 			);
 
-			city.roadCells = roadCells;
+			// Filter road cells to only those within the city boundary
+			const filteredRoadCells = new Set<string>();
+			for (const cell of roadCells) {
+				if (city.gridCells.has(cell)) {
+					filteredRoadCells.add(cell);
+				}
+			}
+			city.roadCells = filteredRoadCells;
 		} catch (e) {
 			console.warn(`Failed to compute road cells for ${city.id}:`, e);
 		}

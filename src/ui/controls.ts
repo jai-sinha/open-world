@@ -2,7 +2,12 @@
 // Handles progress display, pause/resume, privacy settings, and configuration
 
 import type { ProcessingConfig, PrivacySettings } from "../types";
-import { ACTIVITY_COLORS } from "../lib/route-layer";
+import { LocationSearchComponent } from "./components/location-search";
+import { ProgressComponent } from "./components/progress";
+import { StatsComponent } from "./components/stats";
+import { CityStatsComponent } from "./components/city-stats";
+import { PrivacyComponent } from "./components/privacy";
+import { RouteControlsComponent } from "./components/route-controls";
 
 export interface ControlsOptions {
 	onPrivacyChange?: (settings: PrivacySettings) => void;
@@ -22,560 +27,108 @@ export class Controls {
 	private options: ControlsOptions;
 	private isProcessing = false;
 
-	private progressBar?: HTMLProgressElement;
-	private progressText?: HTMLElement;
-	private progressSection?: HTMLElement;
-	private statsContainer?: HTMLElement;
-	private cityStatsContainer?: HTMLElement;
-	private routeLegendContainer?: HTMLElement;
-	private routeLegendList?: HTMLElement;
-
-	// City discovery progress UI
-	private cityProcessingBarFill?: HTMLElement;
-	private cityProcessingBarBg?: HTMLElement;
-	private cityProcessingText?: HTMLElement;
-	private isCityProcessing = false;
+	// Components
+	private locationSearch: LocationSearchComponent;
+	private progress: ProgressComponent;
+	private stats: StatsComponent;
+	private cityStats: CityStatsComponent;
+	private privacy: PrivacyComponent;
+	private routeControls: RouteControlsComponent;
 
 	// Event handlers for city discovery events (bound so they can be removed on destroy)
 	private cityDiscoveryStartHandler?: (e: Event) => void;
 	private cityDiscoveryProgressHandler?: (e: Event) => void;
 	private cityDiscoveryCompleteHandler?: (e: Event) => void;
 
-	// Unit-related state and references for updating displayed units
-	private imperialUnits = false;
-	private privacyDistanceInput?: HTMLInputElement;
-	private privacyDistanceValueEl?: HTMLElement;
-	private privacyDistanceLabelEl?: HTMLLabelElement;
-	private areaStatEl: HTMLElement | null = null;
-	private lastAreaKm2 = 0;
-
-	constructor(container: HTMLElement, options: ControlsOptions = {}) {
-		this.container = container;
+	constructor(element: HTMLElement, options: ControlsOptions) {
+		this.container = element;
 		this.options = options;
+
+		// Initialize components
+		this.locationSearch = new LocationSearchComponent({
+			onLocationSelect: (center) => this.options.onLocationSelect?.(center),
+			onMessage: (msg, type) => this.showMessage(msg, type),
+		});
+
+		this.progress = new ProgressComponent();
+
+		this.stats = new StatsComponent();
+
+		this.cityStats = new CityStatsComponent();
+
+		this.privacy = new PrivacyComponent({
+			onPrivacyChange: (settings) => this.options.onPrivacyChange?.(settings),
+		});
+
+		this.routeControls = new RouteControlsComponent({
+			onRouteToggle: (visible) => this.options.onRouteToggle?.(visible),
+			onUnitsToggle: (imperial) => {
+				this.options.onUnitsToggle?.(imperial);
+				this.stats.setUnits(imperial);
+			},
+			onRouteStyleChange: (style) => this.options.onRouteStyleChange?.(style),
+		});
+
 		this.render();
+		this.setupCityDiscoveryListeners();
 	}
 
-	/**
-	 * Render all control elements
-	 */
 	private render(): void {
 		this.container.innerHTML = "";
-		this.container.className = "exploration-controls";
+		this.container.appendChild(this.locationSearch.element);
+		this.container.appendChild(this.progress.element);
+		this.container.appendChild(this.stats.element);
+		this.container.appendChild(this.cityStats.element);
+		this.container.appendChild(this.privacy.element);
+		this.container.appendChild(this.routeControls.element);
+	}
 
-		// Location Search
-		const locationSection = this.createLocationSection();
-		this.container.appendChild(locationSection);
-
-		// Progress section
-		const progressSection = this.createProgressSection();
-		this.container.appendChild(progressSection);
-
-		// Stats display
-		const statsSection = this.createStatsSection();
-		this.container.appendChild(statsSection);
-
-		// City Stats
-		const cityStatsSection = this.createCityStatsSection();
-		this.container.appendChild(cityStatsSection);
-
-		// Attach listeners to show city discovery progress in the City Stats panel
-		// (CityManager dispatches CustomEvents during discovery)
+	private setupCityDiscoveryListeners() {
 		if (typeof window !== "undefined") {
 			this.cityDiscoveryStartHandler = (e: Event) => {
 				const evt = e as CustomEvent<{ total: number }>;
-				this.showCityProcessing(0, evt.detail.total);
+				this.cityStats.showProgress(0, evt.detail.total);
 			};
 			this.cityDiscoveryProgressHandler = (e: Event) => {
 				const evt = e as CustomEvent<{ processed: number; total: number }>;
-				this.showCityProcessing(evt.detail.processed, evt.detail.total);
+				this.cityStats.showProgress(evt.detail.processed, evt.detail.total);
 			};
 			this.cityDiscoveryCompleteHandler = (e: Event) => {
 				const evt = e as CustomEvent<{ stats: any[] }>;
-				this.isCityProcessing = false;
-				if (evt.detail?.stats) this.updateCityStats(evt.detail.stats);
+				if (evt.detail?.stats) this.cityStats.updateStats(evt.detail.stats);
 			};
 
 			window.addEventListener("city-discovery-start", this.cityDiscoveryStartHandler);
 			window.addEventListener("city-discovery-progress", this.cityDiscoveryProgressHandler);
 			window.addEventListener("city-discovery-complete", this.cityDiscoveryCompleteHandler);
 		}
-
-		// Privacy settings
-		const privacySection = this.createPrivacySection();
-		this.container.appendChild(privacySection);
-
-		// Route overlay settings
-		const routeSection = this.createRouteSection();
-		this.container.appendChild(routeSection);
-
-		// Apply initial processing state (hide progress section if not processing)
-		this.setProcessing(this.isProcessing);
 	}
 
 	/**
-	 * Create location search section
+	 * Show progress bar
 	 */
-	private createLocationSection(): HTMLElement {
-		const section = document.createElement("div");
-		section.className = "control-section location-section";
-
-		const title = document.createElement("h3");
-		title.textContent = "Jump to Location";
-		section.appendChild(title);
-
-		const inputGroup = document.createElement("div");
-		inputGroup.className = "input-group";
-		inputGroup.style.display = "flex";
-		inputGroup.style.gap = "8px";
-		inputGroup.style.marginBottom = "10px";
-
-		const input = document.createElement("input");
-		input.type = "text";
-		input.placeholder = "City, Country, ZIP code...";
-		input.style.flex = "1";
-		input.style.padding = "4px";
-		input.style.borderRadius = "4px";
-		input.style.border = "1px solid #ccc";
-
-		const button = document.createElement("button");
-		button.textContent = "Go";
-		button.style.padding = "4px 8px";
-		button.style.cursor = "pointer";
-
-		const handleSearch = async () => {
-			const query = input.value.trim();
-			if (!query) return;
-
-			const originalText = button.textContent;
-			button.disabled = true;
-			button.textContent = "...";
-
-			try {
-				const response = await fetch(
-					`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`,
-				);
-				const data = await response.json();
-
-				if (data && data.length > 0) {
-					const { lat, lon } = data[0];
-					this.options.onLocationSelect?.([parseFloat(lon), parseFloat(lat)]);
-				} else {
-					this.showMessage("Location not found", "error");
-				}
-			} catch (e) {
-				console.error("Search failed:", e);
-				this.showMessage("Search failed", "error");
-			} finally {
-				button.disabled = false;
-				button.textContent = originalText;
-			}
-		};
-
-		button.onclick = handleSearch;
-		input.onkeydown = (e) => {
-			if (e.key === "Enter") handleSearch();
-		};
-
-		inputGroup.appendChild(input);
-		inputGroup.appendChild(button);
-		section.appendChild(inputGroup);
-
-		return section;
-	}
-
-	/**
-	 * Create progress display section
-	 */
-	private createProgressSection(): HTMLElement {
-		const section = document.createElement("div");
-		section.className = "control-section progress-section";
-
-		const title = document.createElement("h3");
-		title.textContent = "Processing Progress";
-		section.appendChild(title);
-
-		// Progress bar
-		this.progressBar = document.createElement("progress");
-		this.progressBar.max = 100;
-		this.progressBar.value = 0;
-		section.appendChild(this.progressBar);
-
-		// Progress text
-		this.progressText = document.createElement("div");
-		this.progressText.className = "progress-text";
-		this.progressText.textContent = "Ready";
-		section.appendChild(this.progressText);
-
-		this.progressSection = section;
-		if (!this.isProcessing) {
-			this.progressSection.style.display = "none";
-		}
-
-		return section;
-	}
-
-	/**
-	 * Show or hide the progress section without touching processing state or buttons
-	 */
-	showProgress(visible: boolean): void {
-		if (!this.progressSection) return;
-
-		this.progressSection.style.display = visible ? "" : "none";
-
-		if (!visible) {
-			if (this.progressBar) this.progressBar.value = 0;
-			if (this.progressText) this.progressText.textContent = "Ready";
+	showProgress(visible: boolean = true): void {
+		if (visible) {
+			this.progress.show();
+		} else {
+			this.progress.hide();
 		}
 	}
 
 	/**
-	 * Create route overlay section
-	 */
-	private createRouteSection(): HTMLElement {
-		const section = document.createElement("div");
-		section.className = "control-section route-section";
-
-		const header = document.createElement("div");
-		header.className = "section-header";
-
-		const title = document.createElement("h3");
-		title.textContent = "Route Overlay";
-		header.appendChild(title);
-
-		section.appendChild(header);
-
-		const content = document.createElement("div");
-		content.className = "section-content";
-
-		const togglesRow = document.createElement("div");
-		togglesRow.style.display = "flex";
-		togglesRow.style.gap = "1em";
-		togglesRow.style.alignItems = "center";
-
-		const visibilityToggle = this.createCheckbox(
-			"route-visible",
-			"Show Routes",
-			true,
-			(checked) => {
-				this.options.onRouteToggle?.(checked);
-				if (this.routeLegendContainer) {
-					if (checked) {
-						this.routeLegendContainer.style.display =
-							this.routeLegendList && this.routeLegendList.childElementCount ? "" : "none";
-					} else {
-						this.routeLegendContainer.style.display = "none";
-					}
-				}
-			},
-		);
-		togglesRow.appendChild(visibilityToggle);
-
-		const unitsToggle = this.createCheckbox("route-imperial", "Imperial Units", false, (checked) =>
-			this.options.onUnitsToggle?.(checked),
-		);
-		togglesRow.appendChild(unitsToggle);
-
-		content.appendChild(togglesRow);
-
-		const widthControl = this.createRangeControl(
-			"route-width",
-			"Line Width:",
-			1,
-			5,
-			4.5,
-			0.5,
-			(value) => this.options.onRouteStyleChange?.({ lineWidth: value }),
-		);
-		content.appendChild(widthControl);
-
-		const opacityControl = this.createRangeControl(
-			"route-opacity",
-			"Opacity:",
-			0,
-			1,
-			0.5,
-			0.1,
-			(value) => this.options.onRouteStyleChange?.({ lineOpacity: value }),
-		);
-		content.appendChild(opacityControl);
-
-		// Activity color legend (shows only activity types present)
-		const legend = document.createElement("div");
-		legend.className = "control-group route-legend";
-		legend.style.display = "none";
-
-		const legendTitle = document.createElement("label");
-		legendTitle.textContent = "Activity Colors:";
-		legend.appendChild(legendTitle);
-
-		const legendList = document.createElement("div");
-		legendList.className = "legend-items";
-		legendList.style.display = "flex";
-		legendList.style.flexWrap = "wrap";
-		legendList.style.gap = "8px";
-		legendList.style.marginTop = "6px";
-
-		// keep references for dynamic updates (only show items for activity types that exist)
-		this.routeLegendContainer = legend;
-		this.routeLegendList = legendList;
-
-		legend.appendChild(legendList);
-		content.appendChild(legend);
-
-		section.appendChild(content);
-		return section;
-	}
-
-	/**
-	 * Create privacy settings section
-	 */
-	private createPrivacySection(): HTMLElement {
-		const section = document.createElement("div");
-		section.className = "control-section privacy-section";
-
-		const title = document.createElement("h3");
-		title.textContent = "Privacy Settings";
-		section.appendChild(title);
-
-		// Privacy toggle
-		const privacyToggle = this.createCheckbox(
-			"privacy-enabled",
-			"Hide Route Start/Finish",
-			false,
-			(checked) => this.updatePrivacy({ enabled: checked }),
-		);
-		section.appendChild(privacyToggle);
-
-		// Skip private activities
-		const skipPrivate = this.createCheckbox(
-			"skip-private",
-			"Skip Private Activities",
-			false,
-			(checked) => this.updatePrivacy({ skipPrivateActivities: checked }),
-		);
-		section.appendChild(skipPrivate);
-
-		return section;
-	}
-
-	/**
-	 * Create stats display section
-	 */
-	private createStatsSection(): HTMLElement {
-		const section = document.createElement("div");
-		section.className = "control-section stats-section";
-
-		const title = document.createElement("h3");
-		title.textContent = "Statistics";
-		section.appendChild(title);
-
-		this.statsContainer = document.createElement("div");
-		this.statsContainer.className = "stats-content";
-		this.statsContainer.innerHTML = `
-      <div class="stat-item">
-        <span class="stat-label">Cells Visited:</span>
-        <span class="stat-value" id="stat-cells">0</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Activities Processed:</span>
-        <span class="stat-value" id="stat-activities">0</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Rectangles:</span>
-        <span class="stat-value" id="stat-rectangles">0</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Total Area Explored:</span>
-        <span class="stat-value" id="stat-area">0 km²</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Current Window Exploration:</span>
-        <span class="stat-value" id="stat-viewport">0%</span>
-      </div>
-    `;
-		section.appendChild(this.statsContainer);
-
-		// Keep a reference to the area element so we can update unit formatting
-		this.areaStatEl = this.statsContainer.querySelector("#stat-area") as HTMLElement | null;
-
-		return section;
-	}
-
-	private createCityStatsSection(): HTMLElement {
-		const section = document.createElement("div");
-		section.className = "control-section city-stats-section";
-
-		const title = document.createElement("h3");
-		title.textContent = "Top Cities";
-		section.appendChild(title);
-
-		this.cityStatsContainer = document.createElement("div");
-		this.cityStatsContainer.className = "city-stats-content";
-		this.cityStatsContainer.innerHTML = '<div class="stat-item">Processing cities...</div>';
-		section.appendChild(this.cityStatsContainer);
-
-		return section;
-	}
-
-	/**
-	 * Create data management section
-	 */
-	/**
-	 * Helper: Create checkbox control
-	 */
-	private createCheckbox(
-		id: string,
-		label: string,
-		checked: boolean,
-		onChange: (checked: boolean) => void,
-	): HTMLElement {
-		const control = document.createElement("div");
-		control.className = "control-group checkbox-group";
-
-		const checkbox = document.createElement("input");
-		checkbox.type = "checkbox";
-		checkbox.id = id;
-		checkbox.checked = checked;
-		checkbox.onchange = () => onChange(checkbox.checked);
-
-		const labelEl = document.createElement("label");
-		labelEl.htmlFor = id;
-		labelEl.textContent = label;
-
-		control.appendChild(checkbox);
-		control.appendChild(labelEl);
-
-		return control;
-	}
-
-	/**
-	 * Helper: Create range control
-	 */
-	private createRangeControl(
-		id: string,
-		label: string,
-		min: number,
-		max: number,
-		value: number,
-		step: number,
-		onChange: (value: number) => void,
-	): HTMLElement {
-		const control = document.createElement("div");
-		control.className = "control-group range-group";
-
-		const labelEl = document.createElement("label");
-		labelEl.textContent = label;
-		labelEl.htmlFor = id;
-		control.appendChild(labelEl);
-
-		const input = document.createElement("input");
-		input.type = "range";
-		input.id = id;
-		input.min = min.toString();
-		input.max = max.toString();
-		input.step = step.toString();
-
-		const valueDisplay = document.createElement("span");
-		valueDisplay.className = "value-display";
-
-		// ensure slider UI and numeric values stay aligned during inital render
-		// i shoulda just used react lol
-		const clampValue = (raw: number): number => {
-			if (Number.isNaN(raw)) return min;
-			return Math.min(max, Math.max(min, raw));
-		};
-
-		const setInputValue = (raw: number): number => {
-			const clamped = clampValue(raw);
-			input.value = clamped.toString();
-			valueDisplay.textContent = clamped.toString();
-			return clamped;
-		};
-
-		setInputValue(value);
-
-		input.oninput = () => {
-			const clamped = setInputValue(parseFloat(input.value));
-			onChange(clamped);
-		};
-
-		control.appendChild(input);
-		control.appendChild(valueDisplay);
-
-		return control;
-	}
-
-	/**
-	 * Update progress display
+	 * Update progress bar
 	 */
 	updateProgress(current: number, total: number, message?: string): void {
-		if (this.progressBar) {
-			const percentage = total > 0 ? (current / total) * 100 : 0;
-			this.progressBar.value = percentage;
-		}
-
-		if (this.progressText) {
-			const text = message || `${current} / ${total} activities`;
-			this.progressText.textContent = text;
-		}
+		const percentage = total > 0 ? (current / total) * 100 : 0;
+		const text = message || `${current} / ${total}`;
+		this.progress.update(percentage, text);
 	}
 
 	/**
-	 * Show city discovery progress in the City Stats panel.
-	 * Replaces the city list while discovery is ongoing, showing a simple green bar.
+	 * Show city processing progress
 	 */
 	showCityProcessing(current: number, total: number): void {
-		if (!this.cityStatsContainer) return;
-
-		// If no cities to process, show empty message
-		if (total === 0) {
-			this.isCityProcessing = false;
-			this.cityStatsContainer.innerHTML = '<div class="stat-item">No cities found</div>';
-			return;
-		}
-
-		// When finished or current >= total, clear processing flag and let callers update final stats
-		if (current >= total) {
-			this.isCityProcessing = false;
-			return;
-		}
-
-		this.isCityProcessing = true;
-
-		// Create the UI if not already present
-		if (!this.cityProcessingText || !this.cityProcessingBarBg || !this.cityProcessingBarFill) {
-			this.cityStatsContainer.innerHTML = "";
-			const text = document.createElement("div");
-			text.className = "city-processing-text";
-			this.cityProcessingText = text;
-
-			const barBg = document.createElement("div");
-			barBg.style.height = "8px";
-			barBg.style.backgroundColor = "#eee";
-			barBg.style.borderRadius = "4px";
-			barBg.style.overflow = "hidden";
-			barBg.style.marginTop = "6px";
-
-			const barFill = document.createElement("div");
-			barFill.style.height = "100%";
-			barFill.style.width = "0%";
-			barFill.style.backgroundColor = "#4CAF50";
-			barFill.style.transition = "width 0.15s linear";
-
-			barBg.appendChild(barFill);
-
-			this.cityProcessingBarBg = barBg;
-			this.cityProcessingBarFill = barFill;
-
-			this.cityStatsContainer.appendChild(this.cityProcessingText);
-			this.cityStatsContainer.appendChild(barBg);
-		}
-
-		this.cityProcessingText.textContent = `Processing cities: ${current} / ${total}`;
-		const pct = total > 0 ? (current / total) * 100 : 0;
-		if (this.cityProcessingBarFill) {
-			this.cityProcessingBarFill.style.width = `${pct}%`;
-		}
+		this.cityStats.showProgress(current, total);
 	}
 
 	/**
@@ -588,112 +141,14 @@ export class Controls {
 		area?: number;
 		viewportExplored?: number;
 	}): void {
-		if (!this.statsContainer) return;
-
-		if (stats.cells !== undefined) {
-			const el = this.statsContainer.querySelector("#stat-cells");
-			if (el) el.textContent = stats.cells.toLocaleString();
-		}
-
-		if (stats.activities !== undefined) {
-			const el = this.statsContainer.querySelector("#stat-activities");
-			if (el) el.textContent = stats.activities.toLocaleString();
-		}
-
-		if (stats.rectangles !== undefined) {
-			const el = this.statsContainer.querySelector("#stat-rectangles");
-			if (el) el.textContent = stats.rectangles.toLocaleString();
-		}
-
-		if (stats.area !== undefined) {
-			this.lastAreaKm2 = stats.area; // store for unit toggling
-			if (this.areaStatEl) {
-				if (this.imperialUnits) {
-					// convert km² to mi²
-					const areaMi = stats.area * 0.3861021585;
-					this.areaStatEl.textContent = `${areaMi.toFixed(2)} mi²`;
-				} else {
-					this.areaStatEl.textContent = `${stats.area.toFixed(2)} km²`;
-				}
-			}
-		}
-
-		if (stats.viewportExplored !== undefined) {
-			const el = this.statsContainer.querySelector("#stat-viewport");
-			if (el) {
-				if (stats.viewportExplored === -1) {
-					el.textContent = "Zoom In";
-				} else {
-					el.textContent = `${stats.viewportExplored.toFixed(2)}%`;
-				}
-			}
-		}
+		this.stats.updateStats(stats);
 	}
 
+	/**
+	 * Update city stats list
+	 */
 	updateCityStats(stats: any[]): void {
-		if (!this.cityStatsContainer) return;
-
-		// If discovery is ongoing, prefer the progress UI and avoid showing incomplete data
-		if (this.isCityProcessing) return;
-
-		// Handle discovery sentinel (CityManager may return a progress stat while discovering)
-		if (stats.length === 1 && stats[0].cityId === "processing") {
-			this.showCityProcessing(stats[0].visitedCount, stats[0].totalCells);
-			return;
-		}
-
-		if (stats.length === 0) {
-			this.cityStatsContainer.innerHTML = '<div class="stat-item">No cities found</div>';
-			return;
-		}
-
-		this.cityStatsContainer.innerHTML = "";
-		const list = document.createElement("div");
-		list.className = "city-list";
-		list.style.display = "flex";
-		list.style.flexDirection = "column";
-		list.style.gap = "8px";
-
-		stats.forEach((city) => {
-			const item = document.createElement("div");
-			item.className = "city-item";
-			item.style.display = "flex";
-			item.style.flexDirection = "column";
-			item.style.fontSize = "0.9em";
-
-			const header = document.createElement("div");
-			header.style.display = "flex";
-			header.style.justifyContent = "space-between";
-			header.style.marginBottom = "2px";
-
-			const name = document.createElement("span");
-			name.textContent = city.displayName.split(",")[0]; // Just city name
-			name.style.fontWeight = "500";
-
-			const pct = document.createElement("span");
-			pct.textContent = `${city.percentage.toFixed(1)}%`;
-
-			header.appendChild(name);
-			header.appendChild(pct);
-
-			const barBg = document.createElement("div");
-			barBg.style.height = "4px";
-			barBg.style.backgroundColor = "#eee";
-			barBg.style.borderRadius = "2px";
-			barBg.style.overflow = "hidden";
-
-			const barFill = document.createElement("div");
-			barFill.style.height = "100%";
-			barFill.style.width = `${city.percentage}%`;
-			barFill.style.backgroundColor = "#4CAF50";
-
-			barBg.appendChild(barFill);
-			item.appendChild(header);
-			item.appendChild(barBg);
-			list.appendChild(item);
-		});
-
-		this.cityStatsContainer.appendChild(list);
+		this.cityStats.updateStats(stats);
 	}
 
 	/**
@@ -701,130 +156,30 @@ export class Controls {
 	 */
 	setProcessing(processing: boolean): void {
 		this.isProcessing = processing;
-
-		// Show/hide progress section based on processing state
-		if (this.progressSection) {
-			this.progressSection.style.display = processing ? "" : "none";
+		if (processing) {
+			this.progress.show();
+		} else {
+			// Delay hiding slightly to show 100%
+			setTimeout(() => {
+				if (!this.isProcessing) {
+					this.progress.hide();
+				}
+			}, 1000);
 		}
-
-		// Reset progress display when processing stops
-		if (!processing) {
-			if (this.progressBar) {
-				this.progressBar.value = 0;
-			}
-			if (this.progressText) {
-				this.progressText.textContent = "Ready";
-			}
-		}
-	}
-
-	/**
-	 * Handle import
-	 */
-	/**
-	 * Update privacy settings
-	 */
-	private updatePrivacy(partial: Partial<PrivacySettings>): void {
-		this.options.onPrivacyChange?.({
-			enabled: false,
-			removeDistance: 100,
-			snapToGrid: false,
-			skipPrivateActivities: false,
-			...partial,
-		});
 	}
 
 	/**
 	 * Toggle units and update displayed units
 	 */
 	setUnits(imperial: boolean): void {
-		this.imperialUnits = imperial;
-
-		// Update units checkbox state if present
-		const checkbox = document.getElementById("route-imperial") as HTMLInputElement | null;
-		if (checkbox) checkbox.checked = imperial;
-
-		// Update privacy label and value display
-		if (this.privacyDistanceLabelEl) {
-			this.privacyDistanceLabelEl.textContent = `Remove Distance (${imperial ? "ft" : "m"}):`;
-		}
-		if (this.privacyDistanceInput && this.privacyDistanceValueEl) {
-			const meters = parseInt(this.privacyDistanceInput.value, 10) || 0;
-			if (imperial) {
-				const feet = Math.round(meters * 3.280839895);
-				this.privacyDistanceValueEl.textContent = `${feet}ft`;
-			} else {
-				this.privacyDistanceValueEl.textContent = `${meters}m`;
-			}
-		}
-
-		// Update area display based on last known area
-		if (this.areaStatEl) {
-			if (imperial) {
-				const areaMi = this.lastAreaKm2 * 0.3861021585;
-				this.areaStatEl.textContent = `${areaMi.toFixed(2)} mi²`;
-			} else {
-				this.areaStatEl.textContent = `${this.lastAreaKm2.toFixed(2)} km²`;
-			}
-		}
+		this.stats.setUnits(imperial);
 	}
 
 	/**
 	 * Update the route activity types shown in the legend.
-	 * Pass an array of activity type strings (e.g. ['Run', 'Ride']).
-	 * If the array is empty or no known types are present, the legend is hidden.
 	 */
 	updateRouteActivityTypes(types: string[]): void {
-		if (!this.routeLegendList || !this.routeLegendContainer) return;
-
-		const provided = new Set(types || []);
-
-		// Keep known types in the defined order, only those present
-		const knownOrder = Object.keys(ACTIVITY_COLORS).filter((k) => k !== "default");
-		const presentKnown = knownOrder.filter((k) => provided.has(k));
-
-		// Any unknown types should be shown with default color
-		const unknowns = Array.from(provided).filter(
-			(t) => !Object.prototype.hasOwnProperty.call(ACTIVITY_COLORS, t),
-		);
-
-		// Clear existing items
-		this.routeLegendList.innerHTML = "";
-
-		if (presentKnown.length === 0 && unknowns.length === 0) {
-			// Nothing to show
-			this.routeLegendContainer.style.display = "none";
-			return;
-		}
-
-		// Show container only if the routes overlay is visible
-		const routesVisible =
-			(document.getElementById("route-visible") as HTMLInputElement | null)?.checked ?? true;
-		this.routeLegendContainer.style.display = routesVisible ? "" : "none";
-
-		const addItem = (type: string, color: string) => {
-			const item = document.createElement("div");
-			item.className = "legend-item";
-			item.style.display = "inline-flex";
-			item.style.alignItems = "center";
-			item.style.marginRight = "12px";
-			item.style.fontSize = "13px";
-
-			const swatch = document.createElement("span");
-			swatch.className = "legend-swatch";
-			swatch.style.cssText = `display:inline-block; width:12px; height:12px; background:${color}; border-radius:2px; margin-right:6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);`;
-
-			const label = document.createElement("span");
-			label.className = "legend-label";
-			label.textContent = type === "default" ? "Other" : type;
-
-			item.appendChild(swatch);
-			item.appendChild(label);
-			this.routeLegendList!.appendChild(item);
-		};
-
-		presentKnown.forEach((t) => addItem(t, ACTIVITY_COLORS[t] || ACTIVITY_COLORS.default));
-		unknowns.forEach((t) => addItem(t, ACTIVITY_COLORS.default));
+		this.routeControls.updateActivityTypes(types);
 	}
 
 	/**
@@ -861,9 +216,6 @@ export class Controls {
 	}
 }
 
-/**
- * Create controls instance
- */
 export function createControls(
 	container: HTMLElement | string,
 	options: ControlsOptions = {},
