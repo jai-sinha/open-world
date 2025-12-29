@@ -8,6 +8,7 @@ const PUBLIC_DIR = join(__dirname, "..", "public");
 
 const STRAVA_CLIENT_ID = Bun.env.STRAVA_CLIENT_ID || "";
 const STRAVA_CLIENT_SECRET = Bun.env.STRAVA_CLIENT_SECRET || "";
+const STRAVA_VERIFY_TOKEN = "STRAVA";
 const GEOAPIFY_KEY = Bun.env.GEOAPIFY_KEY || "";
 const PORT = parseInt(Bun.env.PORT || "3000", 10);
 
@@ -18,6 +19,16 @@ const isProduction = args.includes("--prod") || Bun.env.NODE_ENV === "production
 interface TokenRequest {
 	code?: string;
 	refresh_token?: string;
+}
+
+interface WebhookEvent {
+	object_type: "activity" | "athlete";
+	object_id: number;
+	aspect_type: "create" | "update" | "delete";
+	updates: Record<string, any>;
+	owner_id: number;
+	subscription_id: number;
+	event_time: number;
 }
 
 // Build at startup if not in production
@@ -167,6 +178,96 @@ Bun.serve({
 				});
 			} catch (error) {
 				console.error("Token refresh error:", error);
+				return new Response(JSON.stringify({ error: "Internal server error" }), {
+					status: 500,
+					headers: { ...corsHeaders, "Content-Type": "application/json" },
+				});
+			}
+		}
+
+		// Strava Webhook Validation
+		if (path === "/api/strava/webhook" && req.method === "GET") {
+			const mode = url.searchParams.get("hub.mode");
+			const token = url.searchParams.get("hub.verify_token");
+			const challenge = url.searchParams.get("hub.challenge");
+
+			if (mode === "subscribe" && token === STRAVA_VERIFY_TOKEN) {
+				console.log("Webhook verified");
+				return new Response(JSON.stringify({ "hub.challenge": challenge }), {
+					headers: { ...corsHeaders, "Content-Type": "application/json" },
+				});
+			}
+
+			return new Response("Forbidden", { status: 403 });
+		}
+
+		// Strava Webhook Event
+		if (path === "/api/strava/webhook" && req.method === "POST") {
+			try {
+				const event = (await req.json()) as WebhookEvent;
+				console.log("Webhook event received:", event);
+
+				// Handle deauthorization
+				// "updates": { "authorized": "false" }
+				if (event.object_type === "athlete" && event.updates?.authorized === "false") {
+					console.log(`Athlete ${event.owner_id} revoked access`);
+				}
+
+				return new Response("EVENT_RECEIVED", { status: 200 });
+			} catch (error) {
+				console.error("Webhook error:", error);
+				return new Response("Webhook error", { status: 500 });
+			}
+		}
+
+		// Helper to create webhook subscription
+		if (path === "/api/strava/webhook/subscribe" && req.method === "POST") {
+			try {
+				const body = (await req.json()) as { callback_url: string };
+
+				if (!body.callback_url) {
+					return new Response(JSON.stringify({ error: "callback_url required" }), {
+						status: 400,
+						headers: { ...corsHeaders, "Content-Type": "application/json" },
+					});
+				}
+
+				if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET) {
+					return new Response(
+						JSON.stringify({ error: "Server not configured with Strava credentials" }),
+						{
+							status: 500,
+							headers: { ...corsHeaders, "Content-Type": "application/json" },
+						},
+					);
+				}
+
+				const formData = new FormData();
+				formData.append("client_id", STRAVA_CLIENT_ID);
+				formData.append("client_secret", STRAVA_CLIENT_SECRET);
+				formData.append("callback_url", body.callback_url);
+				formData.append("verify_token", STRAVA_VERIFY_TOKEN);
+
+				const response = await fetch("https://www.strava.com/api/v3/push_subscriptions", {
+					method: "POST",
+					body: formData,
+				});
+
+				const data = await response.json();
+
+				if (!response.ok) {
+					console.error("Failed to create subscription:", data);
+					return new Response(JSON.stringify(data), {
+						status: response.status,
+						headers: { ...corsHeaders, "Content-Type": "application/json" },
+					});
+				}
+
+				return new Response(JSON.stringify(data), {
+					headers: { ...corsHeaders, "Content-Type": "application/json" },
+				});
+			} catch (error) {
+				console.error("Subscription creation error:", error);
 				return new Response(JSON.stringify({ error: "Internal server error" }), {
 					status: 500,
 					headers: { ...corsHeaders, "Content-Type": "application/json" },
