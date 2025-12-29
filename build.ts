@@ -30,14 +30,6 @@ async function copyPublicAssets() {
 				console.log(`  ✓ Copied ${file}`);
 			}
 		}
-
-		// Copy data directory (city boundaries, etc.)
-		try {
-			await Bun.$`cp -r ${join(publicDir, "data")} ${join(outdir, "data")}`;
-			console.log("  ✓ Copied data directory");
-		} catch {
-			console.warn("  ⚠ Data directory not found (optional)");
-		}
 	} catch (error) {
 		console.warn("Warning: Could not copy public assets", error);
 	}

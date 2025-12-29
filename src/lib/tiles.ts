@@ -184,7 +184,7 @@ export async function getRoadCellsForBbox(
 	const union = new Set<string>();
 
 	// Process tiles in parallel with concurrency limit
-	const CONCURRENCY = 8;
+	const CONCURRENCY = 32;
 	const queue = [...tiles];
 
 	const processTile = async (z: number, x: number, y: number) => {

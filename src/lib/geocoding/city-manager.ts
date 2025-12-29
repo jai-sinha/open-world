@@ -1,7 +1,6 @@
 import type { Feature, Polygon, MultiPolygon } from "geojson";
 import { metersToLatLng, rasterizePolygon } from "../projection";
 import type { StravaActivity } from "../../types";
-import { cityBoundaryLoader } from "./city-data/loader";
 import { computeCityStats } from "../stats";
 import { getRoadCellsForBbox, setRoadPMTilesURL } from "../tiles";
 import { getPMTilesFilename } from "../pmtiles-mapping";
@@ -21,7 +20,7 @@ export interface City {
 	boundary: Feature<Polygon | MultiPolygon>;
 	gridCells: Set<string>; // All cells in polygon
 	roadCells: Set<string> | null; // Road-only cells (async computed)
-	source: "bundle" | "nominatim";
+	source: "nominatim";
 }
 
 export interface CityStats {
@@ -30,7 +29,7 @@ export interface CityStats {
 	totalCells: number;
 	visitedCount: number;
 	percentage: number;
-	source: "bundle" | "nominatim";
+	source: "nominatim";
 }
 
 interface NominatimAddress {
@@ -49,7 +48,6 @@ export class CityManager {
 	private visitedCells: Set<string>;
 	private cellSize: number;
 	private isProcessing = false;
-	private bundleLoaded = false;
 
 	// Discovery progress tracking
 	private discoveryTotal = 0;
@@ -63,17 +61,6 @@ export class CityManager {
 	constructor(visitedCells: Set<string>, cellSize: number) {
 		this.visitedCells = visitedCells;
 		this.cellSize = cellSize;
-		this.initializeBundle();
-	}
-
-	private async initializeBundle() {
-		try {
-			await cityBoundaryLoader.load();
-			this.bundleLoaded = true;
-		} catch (e) {
-			console.warn("Failed to load city boundary bundle, will fall back to Nominatim:", e);
-			this.bundleLoaded = false;
-		}
 	}
 
 	public updateVisitedCells(cells: Set<string>) {
@@ -90,10 +77,6 @@ export class CityManager {
 		this.discoveryTotal = 0;
 
 		try {
-			if (!this.bundleLoaded) {
-				await this.initializeBundle();
-			}
-
 			const uniqueLocations = this.groupActivitiesByLocation(activities);
 			this.discoveryTotal = uniqueLocations.length;
 
@@ -151,14 +134,6 @@ export class CityManager {
 			const cityId = `${cityName}, ${country}`;
 			if (this.cities.has(cityId)) return;
 
-			// Try bundle first
-			const bundleBoundary = cityBoundaryLoader.getByID(cityId);
-			const geom = bundleBoundary?.geometry;
-			if (geom && (geom.type === "Polygon" || geom.type === "MultiPolygon")) {
-				this.createCity(geom, cityId, cityName, country, region, "bundle");
-				return;
-			}
-
 			// Fallback to Nominatim
 			await this.fetchCityBoundaryFromNominatim(cityName, country, region, cityId);
 		} catch (e) {
@@ -202,7 +177,7 @@ export class CityManager {
 		cityName: string,
 		country: string,
 		region: string | undefined,
-		source: "bundle" | "nominatim",
+		source: "nominatim",
 	) {
 		try {
 			const feature: Feature<Polygon | MultiPolygon> = {
@@ -244,9 +219,6 @@ export class CityManager {
 
 		while (this.roadCellQueue.length > 0) {
 			const city = this.roadCellQueue.shift()!;
-			// getRoadCellsForBbox hits R2, which doesn't need strict 1s throttling like Nominatim.
-			// But let's keep a small delay to yield to UI.
-			await new Promise((resolve) => setTimeout(resolve, 50));
 			await this.computeRoadCellsForCity(city);
 		}
 
@@ -355,7 +327,7 @@ export class CityManager {
 					visitedCount: this.discoveryProcessed,
 					percentage:
 						this.discoveryTotal > 0 ? (this.discoveryProcessed / this.discoveryTotal) * 100 : 0,
-					source: "bundle",
+					source: "nominatim",
 				},
 			];
 		}

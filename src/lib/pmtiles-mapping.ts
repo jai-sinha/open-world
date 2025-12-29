@@ -26,6 +26,9 @@ const MAPPING: Record<string, CountryMap> = {
 			Wisconsin: "wisconsin.pmtiles",
 		},
 	},
+	India: {
+		default: "india.pmtiles",
+	},
 	Germany: {
 		regions: {
 			Bayern: "bayern.pmtiles",
