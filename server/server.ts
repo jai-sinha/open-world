@@ -206,6 +206,58 @@ Bun.serve({
 				}
 			}
 
+			// 2.5. Dev mode: Serve source files (TS/JS) from root
+			if (!exists && !isProduction) {
+				// Special handling for workers in dev mode: map /worker/*.js -> src/worker/*.ts
+				if (path.startsWith("/worker/") && path.endsWith(".js")) {
+					const workerName = path.split("/").pop()?.replace(".js", ".ts");
+					if (workerName) {
+						const workerPath = join(__dirname, "..", "src", "worker", workerName);
+						const workerFile = Bun.file(workerPath);
+						if (await workerFile.exists()) {
+							const content = await workerFile.text();
+							const transpiler = new Bun.Transpiler({ loader: "ts" });
+							const js = await transpiler.transform(content);
+							return new Response(js, {
+								headers: {
+									"Content-Type": "application/javascript; charset=utf-8",
+									"Cache-Control": "no-cache",
+								},
+							});
+						}
+					}
+				}
+
+				// Try resolving from project root
+				let localPath = join(__dirname, "..", path.startsWith("/") ? path.slice(1) : path);
+
+				// If no extension, try adding .ts
+				if (!localPath.match(/\.[a-z]+$/i)) {
+					if (await Bun.file(localPath + ".ts").exists()) {
+						localPath += ".ts";
+					}
+				}
+
+				const localFile = Bun.file(localPath);
+				if (await localFile.exists()) {
+					// If it's a TS file, transpile it
+					if (localPath.endsWith(".ts")) {
+						const content = await localFile.text();
+						const transpiler = new Bun.Transpiler({ loader: "ts" });
+						const js = await transpiler.transform(content);
+						return new Response(js, {
+							headers: {
+								"Content-Type": "application/javascript; charset=utf-8",
+								"Cache-Control": "no-cache",
+							},
+						});
+					}
+
+					file = localFile;
+					exists = true;
+				}
+			}
+
 			// 3. SPA Fallback (serve index.html)
 			if (!exists) {
 				// If it looks like an asset request, return 404

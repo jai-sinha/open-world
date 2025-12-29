@@ -9,7 +9,6 @@ import { createExplorationLayer, ExplorationCanvasLayer } from "./lib/canvas-lay
 import { createRouteOverlay, RouteOverlayLayer } from "./lib/route-layer";
 import { createControls, Controls } from "./ui/controls";
 import { createSidebar, Sidebar } from "./ui/sidebar";
-import { calculateViewportStats } from "./lib/stats";
 import { CityManager } from "./lib/geocoding/city-manager";
 import { setRoadPMTilesURL } from "./lib/tiles";
 
@@ -55,6 +54,7 @@ class ExplorationMapApp {
 	private allActivities: StravaActivity[] = [];
 	private isProcessing = false;
 	private saveTimeout?: number;
+	private statsDebounceTimer?: number;
 
 	async initialize(): Promise<void> {
 		console.log("Initializing Exploration Map...");
@@ -103,7 +103,10 @@ class ExplorationMapApp {
 			"top-right",
 		);
 
-		this.map.on("moveend", () => this.updateStatsUI());
+		this.map.on("moveend", () => {
+			if (this.statsDebounceTimer) clearTimeout(this.statsDebounceTimer);
+			this.statsDebounceTimer = window.setTimeout(() => this.updateStatsUI(), 250);
+		});
 
 		this.explorationLayer = createExplorationLayer(this.map, {
 			id: "exploration-layer",
@@ -394,9 +397,9 @@ class ExplorationMapApp {
 		this.updateStatsUI(cellCount, rectCount);
 	}
 
-	private updateStatsUI(cellCount?: number, rectCount?: number): void {
+	private async updateStatsUI(cellCount?: number, rectCount?: number): Promise<void> {
 		const cells = cellCount ?? this.visitedCells.size;
-		const viewportStats = this.calculateViewportStats();
+		const viewportStats = await this.calculateViewportStats();
 
 		this.controls?.updateStats({
 			cells,
@@ -407,9 +410,20 @@ class ExplorationMapApp {
 		});
 	}
 
-	private calculateViewportStats(): number {
-		if (!this.map) return 0;
-		return calculateViewportStats(this.map, this.visitedCells, this.currentConfig.cellSize);
+	private async calculateViewportStats(): Promise<number> {
+		if (!this.map || !this.cityManager) return 0;
+		if (this.map.getZoom() < 11) return -1;
+
+		const bounds = this.map.getBounds();
+		const ne = bounds.getNorthEast();
+		const sw = bounds.getSouthWest();
+
+		return this.cityManager.calculateViewportStats({
+			minLat: sw.lat,
+			maxLat: ne.lat,
+			minLng: sw.lng,
+			maxLng: ne.lng,
+		});
 	}
 
 	private setProcessingState(isProcessing: boolean): void {
@@ -495,6 +509,9 @@ class ExplorationMapApp {
 		}
 		this.worker?.terminate();
 		this.worker = undefined;
+
+		this.cityManager?.terminate();
+		this.cityManager = undefined;
 
 		this.routeLayer?.remove();
 		this.routeLayer = undefined;

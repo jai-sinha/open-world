@@ -64,7 +64,7 @@ async function buildApp() {
 
 		// Build worker separately
 		const workerResult = await build({
-			entrypoints: ["./src/worker/processor.ts"],
+			entrypoints: ["./src/worker/processor.ts", "./src/worker/city-processor.ts"],
 			outdir: join(outdir, "worker"),
 			target: "browser",
 			format: "esm",

@@ -1,16 +1,7 @@
-import type { Feature, Polygon, MultiPolygon } from "geojson";
-import { metersToLatLng, rasterizePolygon } from "../projection";
 import type { StravaActivity } from "../../types";
-import { computeCityStats } from "../stats";
-import { getRoadCellsForBbox, setRoadPMTilesURL } from "../tiles";
-import { getPMTilesFilename } from "../pmtiles-mapping";
+import type { Feature, Polygon, MultiPolygon } from "geojson";
 
-// Constants
-const TILES_BASE_URL = "https://pub-fe917f235736482c991c98f959f63e11.r2.dev";
-const NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org";
-const USER_AGENT = "OpenWorld-Exploration/1.0";
-const RATE_LIMIT_DELAY_MS = 1100; // Nominatim requires 1s delay
-
+// Export interfaces used by other modules (e.g. stats.ts)
 export interface City {
 	id: string;
 	name: string;
@@ -32,278 +23,152 @@ export interface CityStats {
 	source: "nominatim";
 }
 
-interface NominatimAddress {
-	city?: string;
-	town?: string;
-	village?: string;
-	municipality?: string;
-	country: string;
-	state?: string;
-	region?: string;
-	province?: string;
-}
+// Worker Message Types (Internal)
+type CityProcessorResponse =
+	| {
+			type: "PROGRESS";
+			payload: { processed: number; total: number };
+	  }
+	| {
+			type: "COMPLETE";
+			payload: { stats: CityStats[] };
+	  }
+	| {
+			type: "STATS_UPDATE";
+			payload: { stats: CityStats[] };
+	  }
+	| {
+			type: "VIEWPORT_STATS";
+			payload: { percentage: number };
+	  };
 
 export class CityManager {
-	private cities = new Map<string, City>();
+	private worker: Worker;
 	private visitedCells: Set<string>;
 	private cellSize: number;
-	private isProcessing = false;
-
-	// Discovery progress tracking
-	private discoveryTotal = 0;
-	private discoveryProcessed = 0;
-
-	// Rate limiting
-	private lastApiRequestTime = 0;
-	private roadCellQueue: City[] = [];
-	private isProcessingRoadCells = false;
+	private latestStats: CityStats[] = [];
+	private discoveryProgress = { processed: 0, total: 0 };
+	private onProgressCallback?: (processed: number, total: number) => void;
+	private discoveryPromiseResolve?: (stats: CityStats[]) => void;
+	private viewportStatsResolve?: (percentage: number) => void;
 
 	constructor(visitedCells: Set<string>, cellSize: number) {
 		this.visitedCells = visitedCells;
 		this.cellSize = cellSize;
+
+		// Initialize the worker
+		this.worker = new Worker("/worker/city-processor.js", {
+			type: "module",
+		});
+
+		this.worker.onmessage = (event: MessageEvent<CityProcessorResponse>) => {
+			const { type, payload } = event.data;
+
+			switch (type) {
+				case "PROGRESS":
+					this.discoveryProgress = { processed: payload.processed, total: payload.total };
+					this.onProgressCallback?.(payload.processed, payload.total);
+					this.notifyDiscoveryProgress(payload.processed, payload.total);
+					break;
+				case "STATS_UPDATE":
+					this.latestStats = payload.stats;
+					// Notify UI of incremental updates (re-using complete event for list refresh)
+					this.notifyDiscoveryComplete();
+					break;
+				case "COMPLETE":
+					this.latestStats = payload.stats;
+					this.discoveryPromiseResolve?.(payload.stats);
+					this.notifyDiscoveryComplete();
+					break;
+				case "VIEWPORT_STATS":
+					this.viewportStatsResolve?.(payload.percentage);
+					this.viewportStatsResolve = undefined;
+					break;
+			}
+		};
 	}
 
 	public updateVisitedCells(cells: Set<string>) {
 		this.visitedCells = cells;
+		this.worker.postMessage({
+			type: "UPDATE_VISITED_CELLS",
+			payload: {
+				visitedCells: Array.from(cells),
+			},
+		});
 	}
 
 	public async discoverCitiesFromActivities(
 		activities: StravaActivity[],
 		onProgress?: (processed: number, total: number) => void,
 	): Promise<CityStats[]> {
-		if (this.isProcessing) return this.getStats();
-		this.isProcessing = true;
-		this.discoveryProcessed = 0;
-		this.discoveryTotal = 0;
+		this.onProgressCallback = onProgress;
+		this.latestStats = [];
+		this.discoveryProgress = { processed: 0, total: 0 };
 
-		try {
-			const uniqueLocations = this.groupActivitiesByLocation(activities);
-			this.discoveryTotal = uniqueLocations.length;
+		// Notify start (approximate, worker will refine total)
+		this.notifyDiscoveryStart(0);
 
-			this.notifyDiscoveryStart();
+		return new Promise((resolve) => {
+			this.discoveryPromiseResolve = resolve;
+			this.worker.postMessage({
+				type: "DISCOVER_CITIES",
+				payload: {
+					activities,
+					visitedCells: Array.from(this.visitedCells),
+					cellSize: this.cellSize,
+				},
+			});
+		});
+	}
 
-			for (const [lat, lng] of uniqueLocations) {
-				await this.identifyCity(lat, lng);
-				this.discoveryProcessed++;
-				onProgress?.(this.discoveryProcessed, this.discoveryTotal);
-				this.notifyDiscoveryProgress();
+	public async calculateViewportStats(bounds: {
+		minLat: number;
+		maxLat: number;
+		minLng: number;
+		maxLng: number;
+	}): Promise<number> {
+		return new Promise((resolve) => {
+			// Cancel any pending request
+			if (this.viewportStatsResolve) {
+				this.viewportStatsResolve(0);
 			}
-
-			return this.getStats();
-		} finally {
-			this.isProcessing = false;
-			this.notifyDiscoveryComplete();
-		}
+			this.viewportStatsResolve = resolve;
+			this.worker.postMessage({
+				type: "CALCULATE_VIEWPORT_STATS",
+				payload: {
+					bounds,
+					cellSize: this.cellSize,
+				},
+			});
+		});
 	}
 
-	private groupActivitiesByLocation(activities: StravaActivity[]): Array<[number, number]> {
-		const locations = new Map<string, [number, number]>();
-		for (const activity of activities) {
-			if (!activity.start_latlng || activity.start_latlng.length < 2) continue;
-			const [lat, lng] = activity.start_latlng;
-			// Round to 1 decimal place (~11km) to group nearby starts
-			const key = `${lat.toFixed(1)},${lng.toFixed(1)}`;
-			if (!locations.has(key)) {
-				locations.set(key, [lat, lng]);
-			}
-		}
-		return Array.from(locations.values());
+	public getStats(): CityStats[] {
+		return this.latestStats;
 	}
 
-	private async identifyCity(lat: number, lng: number) {
-		try {
-			await this.enforceRateLimit();
-
-			const response = await fetch(
-				`${NOMINATIM_BASE_URL}/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10`,
-				{ headers: { "User-Agent": USER_AGENT } },
-			);
-			this.lastApiRequestTime = Date.now();
-
-			if (!response.ok) return;
-
-			const data = await response.json();
-			const address = data.address as NominatimAddress;
-
-			const cityName = address.city || address.town || address.village || address.municipality;
-			const country = address.country;
-			const region = address.state || address.region || address.province;
-
-			if (!cityName || !country) return;
-
-			const cityId = `${cityName}, ${country}`;
-			if (this.cities.has(cityId)) return;
-
-			// Fallback to Nominatim
-			await this.fetchCityBoundaryFromNominatim(cityName, country, region, cityId);
-		} catch (e) {
-			console.warn("City identification failed:", e);
-		}
+	public getDiscoveryProgress(): { processed: number; total: number } {
+		return this.discoveryProgress;
 	}
 
-	private async fetchCityBoundaryFromNominatim(
-		city: string,
-		country: string,
-		region: string | undefined,
-		cityId: string,
-	) {
-		try {
-			await this.enforceRateLimit();
-
-			const query = `${NOMINATIM_BASE_URL}/search?q=${encodeURIComponent(
-				city + ", " + country,
-			)}&format=json&polygon_geojson=1&limit=1`;
-
-			const res = await fetch(query, { headers: { "User-Agent": USER_AGENT } });
-			this.lastApiRequestTime = Date.now();
-
-			if (!res.ok) return;
-
-			const data = await res.json();
-			if (data?.[0]?.geojson) {
-				const geojson = data[0].geojson;
-				if (geojson.type === "Polygon" || geojson.type === "MultiPolygon") {
-					this.createCity(geojson, cityId, city, country, region, "nominatim");
-				}
-			}
-		} catch (e) {
-			console.warn(`Failed to fetch boundary for ${cityId} from Nominatim:`, e);
-		}
-	}
-
-	private createCity(
-		geometry: Polygon | MultiPolygon,
-		cityId: string,
-		cityName: string,
-		country: string,
-		region: string | undefined,
-		source: "nominatim",
-	) {
-		try {
-			const feature: Feature<Polygon | MultiPolygon> = {
-				type: "Feature",
-				properties: {},
-				geometry,
-			};
-
-			const gridCells = rasterizePolygon(feature, this.cellSize);
-
-			const city: City = {
-				id: cityId,
-				name: cityName,
-				displayName: cityId,
-				country,
-				region,
-				boundary: feature,
-				gridCells,
-				roadCells: null,
-				source,
-			};
-
-			this.cities.set(cityId, city);
-			this.queueRoadCellComputation(city);
-		} catch (e) {
-			console.warn(`Failed to process boundary for ${cityId}:`, e);
-		}
-	}
-
-	private queueRoadCellComputation(city: City) {
-		this.roadCellQueue.push(city);
-		this.processRoadCellQueue();
-	}
-
-	private async processRoadCellQueue() {
-		if (this.isProcessingRoadCells || this.roadCellQueue.length === 0) return;
-
-		this.isProcessingRoadCells = true;
-
-		while (this.roadCellQueue.length > 0) {
-			const city = this.roadCellQueue.shift()!;
-			await this.computeRoadCellsForCity(city);
-		}
-
-		this.isProcessingRoadCells = false;
-	}
-
-	private async computeRoadCellsForCity(city: City) {
-		try {
-			const pmtilesFile = getPMTilesFilename(city.country, city.region);
-			if (!pmtilesFile) {
-				console.warn(`No road tiles available for ${city.country} - ${city.region}`);
-				return;
-			}
-
-			setRoadPMTilesURL(`${TILES_BASE_URL}/${pmtilesFile}`);
-
-			const bounds = this.getCityBounds(city.gridCells);
-			if (!bounds) return;
-
-			const swLatLng = metersToLatLng(
-				bounds.minX * this.cellSize + this.cellSize / 2,
-				bounds.minY * this.cellSize + this.cellSize / 2,
-			);
-			const neLatLng = metersToLatLng(
-				bounds.maxX * this.cellSize + this.cellSize / 2,
-				bounds.maxY * this.cellSize + this.cellSize / 2,
-			);
-
-			const roadCells = await getRoadCellsForBbox(
-				Math.min(swLatLng.lat, neLatLng.lat),
-				Math.max(swLatLng.lat, neLatLng.lat),
-				Math.min(swLatLng.lng, neLatLng.lng),
-				Math.max(swLatLng.lng, neLatLng.lng),
-				this.cellSize,
-			);
-
-			city.roadCells = roadCells;
-		} catch (e) {
-			console.warn(`Failed to compute road cells for ${city.id}:`, e);
-		}
-	}
-
-	private getCityBounds(cells: Set<string>) {
-		if (cells.size === 0) return null;
-
-		let minX = Infinity;
-		let minY = Infinity;
-		let maxX = -Infinity;
-		let maxY = -Infinity;
-
-		for (const key of cells) {
-			const [xStr, yStr] = key.split(",");
-			const x = parseInt(xStr, 10);
-			const y = parseInt(yStr, 10);
-			minX = Math.min(minX, x);
-			minY = Math.min(minY, y);
-			maxX = Math.max(maxX, x);
-			maxY = Math.max(maxY, y);
-		}
-
-		return { minX, minY, maxX, maxY };
-	}
-
-	private async enforceRateLimit() {
-		const timeSinceLast = Date.now() - this.lastApiRequestTime;
-		if (timeSinceLast < RATE_LIMIT_DELAY_MS) {
-			await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_DELAY_MS - timeSinceLast));
-		}
+	public terminate() {
+		this.worker.terminate();
 	}
 
 	// --- Event Dispatchers ---
 
-	private notifyDiscoveryStart() {
+	private notifyDiscoveryStart(total: number) {
 		if (typeof window !== "undefined") {
-			window.dispatchEvent(
-				new CustomEvent("city-discovery-start", { detail: { total: this.discoveryTotal } }),
-			);
+			window.dispatchEvent(new CustomEvent("city-discovery-start", { detail: { total } }));
 		}
 	}
 
-	private notifyDiscoveryProgress() {
+	private notifyDiscoveryProgress(processed: number, total: number) {
 		if (typeof window !== "undefined") {
 			window.dispatchEvent(
 				new CustomEvent("city-discovery-progress", {
-					detail: { processed: this.discoveryProcessed, total: this.discoveryTotal },
+					detail: { processed, total },
 				}),
 			);
 		}
@@ -312,29 +177,8 @@ export class CityManager {
 	private notifyDiscoveryComplete() {
 		if (typeof window !== "undefined") {
 			window.dispatchEvent(
-				new CustomEvent("city-discovery-complete", { detail: { stats: this.getStats() } }),
+				new CustomEvent("city-discovery-complete", { detail: { stats: this.latestStats } }),
 			);
 		}
-	}
-
-	public getStats(): CityStats[] {
-		if (this.isProcessing) {
-			return [
-				{
-					cityId: "processing",
-					displayName: "Processing cities...",
-					totalCells: this.discoveryTotal,
-					visitedCount: this.discoveryProcessed,
-					percentage:
-						this.discoveryTotal > 0 ? (this.discoveryProcessed / this.discoveryTotal) * 100 : 0,
-					source: "nominatim",
-				},
-			];
-		}
-		return computeCityStats(this.cities.values(), this.visitedCells);
-	}
-
-	public getDiscoveryProgress(): { processed: number; total: number } {
-		return { processed: this.discoveryProcessed, total: this.discoveryTotal };
 	}
 }

@@ -6,20 +6,12 @@ import { VectorTile } from "@mapbox/vector-tile";
 
 // Configure this at runtime via setRoadPMTilesURL()
 let PMTILES_URL = "";
-let pmtiles: PMTiles | null = null;
-
-// Circuit breaker state
-let failureCount = 0;
-const MAX_FAILURES = 5;
-let circuitOpen = false;
+let globalPmtiles: PMTiles | null = null;
 
 export function setRoadPMTilesURL(url: string) {
 	if (PMTILES_URL === url) return;
 	PMTILES_URL = url;
-	pmtiles = url ? new PMTiles(url) : null;
-	// Reset circuit breaker when URL changes
-	failureCount = 0;
-	circuitOpen = false;
+	globalPmtiles = url ? new PMTiles(url) : null;
 }
 
 interface RoadCellsDB extends DBSchema {
@@ -31,16 +23,27 @@ interface RoadCellsDB extends DBSchema {
 			cells: string[];
 			timestamp: number;
 		};
+		indexes: {
+			timestamp: number;
+		};
 	};
 }
 
 let db: IDBPDatabase<RoadCellsDB> | null = null;
 async function getDb(): Promise<IDBPDatabase<RoadCellsDB>> {
 	if (db) return db;
-	db = await openDB<RoadCellsDB>("open-world", 2, {
-		upgrade(db) {
+	db = await openDB<RoadCellsDB>("open-world", 3, {
+		upgrade(db, _oldVersion, _newVersion, transaction) {
+			// Create store if it doesn't exist
 			if (!db.objectStoreNames.contains("roadTileCells")) {
-				db.createObjectStore("roadTileCells", { keyPath: "key" });
+				const store = db.createObjectStore("roadTileCells", { keyPath: "key" });
+				store.createIndex("timestamp", "timestamp");
+			} else {
+				// If store exists but index doesn't (migration from v2)
+				const store = transaction.objectStore("roadTileCells");
+				if (!store.indexNames.contains("timestamp")) {
+					store.createIndex("timestamp", "timestamp");
+				}
 			}
 		},
 	});
@@ -93,11 +96,61 @@ async function getCachedTileCells(
 	try {
 		const db = await getDb();
 		const rec = await db.get("roadTileCells", tileKey(z, x, y, cellSize));
-		if (rec) return new Set(rec.cells);
+		if (rec) {
+			// Update timestamp for LRU
+			// We do this asynchronously and don't await it to avoid blocking reads
+			updateTimestamp(rec.key, rec.cells).catch(console.warn);
+			return new Set(rec.cells);
+		}
 	} catch (e) {
 		console.warn("Failed to read tile cells from cache:", e);
 	}
 	return null;
+}
+
+async function updateTimestamp(key: string, cells: string[]) {
+	try {
+		const db = await getDb();
+		await db.put("roadTileCells", {
+			key,
+			cells,
+			timestamp: Date.now(),
+		});
+	} catch {
+		// Ignore write errors for timestamp updates
+	}
+}
+
+// Keep cache size under control (e.g. 500 tiles ~ 20-50MB depending on density)
+const MAX_CACHE_SIZE = 500;
+let pruneInProgress = false;
+
+async function pruneCache() {
+	if (pruneInProgress) return;
+	pruneInProgress = true;
+	try {
+		const db = await getDb();
+		const count = await db.count("roadTileCells");
+		if (count > MAX_CACHE_SIZE) {
+			const deleteCount = count - MAX_CACHE_SIZE;
+			// Delete oldest entries
+			let deleted = 0;
+			let cursor = await db
+				.transaction("roadTileCells", "readwrite")
+				.store.index("timestamp")
+				.openCursor();
+
+			while (cursor && deleted < deleteCount) {
+				await cursor.delete();
+				deleted++;
+				cursor = await cursor.continue();
+			}
+		}
+	} catch (e) {
+		console.warn("Cache pruning failed:", e);
+	} finally {
+		pruneInProgress = false;
+	}
 }
 
 async function cacheTileCells(
@@ -114,30 +167,31 @@ async function cacheTileCells(
 			cells: Array.from(cells),
 			timestamp: Date.now(),
 		});
+		// Trigger prune always after adding
+		pruneCache().catch(console.warn);
 	} catch (e) {
 		console.warn("Failed to cache tile cells:", e);
 	}
 }
 
-async function fetchTileBytes(z: number, x: number, y: number): Promise<ArrayBuffer | null> {
-	if (!pmtiles) {
-		console.warn("PMTiles URL not configured");
+async function fetchTileBytes(
+	z: number,
+	x: number,
+	y: number,
+	pmtilesInstance: PMTiles | null,
+): Promise<ArrayBuffer | null> {
+	const target = pmtilesInstance || globalPmtiles;
+	if (!target) {
+		console.warn("PMTiles source not configured");
 		return null;
 	}
-	if (circuitOpen) return null;
 
 	try {
-		const resp = await pmtiles.getZxy(z, x, y);
-		failureCount = 0; // Reset on success
+		const resp = await target.getZxy(z, x, y);
 		if (!resp || !resp.data) return null;
 		return resp.data as ArrayBuffer;
 	} catch (e) {
 		console.warn(`PMTiles fetch failed for ${z}/${x}/${y}:`, e);
-		failureCount++;
-		if (failureCount >= MAX_FAILURES) {
-			console.warn("Too many PMTiles failures, opening circuit breaker to prevent spam.");
-			circuitOpen = true;
-		}
 		return null;
 	}
 }
@@ -174,23 +228,28 @@ export async function getRoadCellsForBbox(
 	maxLng: number,
 	cellSize: number,
 	zoom = 14,
+	useCache = true,
+	pmtilesInstance?: PMTiles | null,
 ): Promise<Set<string>> {
-	if (!pmtiles) {
-		console.warn("PMTiles not configured; call setRoadPMTilesURL()");
+	// If no instance provided and no global set, we can't do anything.
+	if (!pmtilesInstance && !globalPmtiles) {
+		console.warn("PMTiles not configured; call setRoadPMTilesURL() or pass instance");
 		return new Set();
 	}
+
 	// Assemble from tile-level caches, then filter to bbox
 	const tiles = coverTilesForBbox(minLat, maxLat, minLng, maxLng, zoom);
 	const union = new Set<string>();
 
 	// Process tiles in parallel with concurrency limit
-	const CONCURRENCY = 32;
+	const CONCURRENCY = 16; // Reduced from 32 to be gentler
 	const queue = [...tiles];
 
 	const processTile = async (z: number, x: number, y: number) => {
-		let tileCells = await getCachedTileCells(z, x, y, cellSize);
+		let tileCells = useCache ? await getCachedTileCells(z, x, y, cellSize) : null;
+
 		if (!tileCells) {
-			const bytes = await fetchTileBytes(z, x, y);
+			const bytes = await fetchTileBytes(z, x, y, pmtilesInstance || null);
 			if (!bytes) return;
 			try {
 				const vt = new VectorTile(new Pbf(new Uint8Array(bytes)));
@@ -226,7 +285,9 @@ export async function getRoadCellsForBbox(
 					}
 				}
 				tileCells = cells;
-				await cacheTileCells(z, x, y, cellSize, tileCells);
+				if (useCache) {
+					await cacheTileCells(z, x, y, cellSize, tileCells);
+				}
 			} catch (e) {
 				console.warn(`Failed to decode vector tile ${z}/${x}/${y}:`, e);
 			}
@@ -240,6 +301,8 @@ export async function getRoadCellsForBbox(
 		.fill(null)
 		.map(async () => {
 			while (queue.length > 0) {
+				// Yield to main thread to improve INP
+				await new Promise((resolve) => setTimeout(resolve, 0));
 				const tile = queue.shift();
 				if (tile) await processTile(tile.z, tile.x, tile.y);
 			}
