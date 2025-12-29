@@ -1,45 +1,45 @@
-// Mapping of Country -> Region -> PMTiles filename
-// Based on the provided list of available extracts.
+import type { CountryMap } from "../types";
 
-interface RegionMap {
-	[region: string]: string;
-}
-
-interface CountryMap {
-	default?: string;
-	regions?: RegionMap;
-}
-
+/**
+ * Mapping of Country -> Region -> PMTiles filename.
+ *
+ * SCALABILITY NOTE:
+ * As the number of regions grows (e.g. covering the entire world), this static mapping
+ * will become unwieldy.
+ *
+ * Future improvements:
+ * 1. Move this mapping to a JSON file hosted alongside the tiles (e.g. `regions.json`).
+ * 2. Fetch the mapping dynamically at runtime.
+ * 3. Use a spatial index (like a coarse quadtree or R-tree) to query which tile covers
+ *    a given lat/lng, rather than relying on administrative names which can be ambiguous.
+ */
 const MAPPING: Record<string, CountryMap> = {
 	"United States": {
 		regions: {
-			"California": "california.pmtiles",
-			"Colorado": "colorado.pmtiles",
-			"Illinois": "illinois.pmtiles",
-			"Indiana": "indiana.pmtiles",
-			"Nevada": "nevada.pmtiles",
+			California: "california.pmtiles",
+			Colorado: "colorado.pmtiles",
+			Illinois: "illinois.pmtiles",
+			Indiana: "indiana.pmtiles",
+			Nevada: "nevada.pmtiles",
 			"New York": "new-york.pmtiles",
-			"Utah": "utah.pmtiles",
-			"Wisconsin": "wisconsin.pmtiles",
+			Utah: "utah.pmtiles",
+			Wisconsin: "wisconsin.pmtiles",
 		},
 	},
-	"Germany": {
+	Germany: {
 		regions: {
-			"Bayern": "bayern.pmtiles",
-			"Bavaria": "bayern.pmtiles", // English alias
+			Bayern: "bayern.pmtiles",
+			Bavaria: "bayern.pmtiles", // English alias
 			"Baden-Württemberg": "baden-wuerttemberg.pmtiles",
 		},
 	},
-	"Monaco": {
+	Monaco: {
 		default: "monaco.pmtiles",
 	},
-	"Switzerland": {
+	Switzerland: {
 		default: "switzerland.pmtiles",
 	},
-	"India": {
-		default: "india.pmtiles",
-	},
-	"France": {
+	France: {
 		regions: {
 			"Rhône-Alpes": "rhone-alpes.pmtiles",
 			"Auvergne-Rhône-Alpes": "rhone-alpes.pmtiles", // Modern region

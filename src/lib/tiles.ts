@@ -7,10 +7,19 @@ import { VectorTile } from "@mapbox/vector-tile";
 // Configure this at runtime via setRoadPMTilesURL()
 let PMTILES_URL = "";
 let pmtiles: PMTiles | null = null;
+
+// Circuit breaker state
+let failureCount = 0;
+const MAX_FAILURES = 5;
+let circuitOpen = false;
+
 export function setRoadPMTilesURL(url: string) {
 	if (PMTILES_URL === url) return;
 	PMTILES_URL = url;
 	pmtiles = url ? new PMTiles(url) : null;
+	// Reset circuit breaker when URL changes
+	failureCount = 0;
+	circuitOpen = false;
 }
 
 interface RoadCellsDB extends DBSchema {
@@ -23,42 +32,19 @@ interface RoadCellsDB extends DBSchema {
 			timestamp: number;
 		};
 	};
-	// Optional: legacy bbox cache (kept for backwards compatibility)
-	roadCells: {
-		key: string;
-		value: {
-			bbox: string;
-			cellSize: number;
-			cells: string[];
-			timestamp: number;
-		};
-	};
 }
 
 let db: IDBPDatabase<RoadCellsDB> | null = null;
 async function getDb(): Promise<IDBPDatabase<RoadCellsDB>> {
 	if (db) return db;
 	db = await openDB<RoadCellsDB>("open-world", 2, {
-		upgrade(db, oldVersion) {
-			if (!db.objectStoreNames.contains("roadCells")) {
-				db.createObjectStore("roadCells", { keyPath: "bbox" });
-			}
+		upgrade(db) {
 			if (!db.objectStoreNames.contains("roadTileCells")) {
 				db.createObjectStore("roadTileCells", { keyPath: "key" });
 			}
 		},
 	});
 	return db;
-}
-
-function bboxKey(
-	minLat: number,
-	maxLat: number,
-	minLng: number,
-	maxLng: number,
-	cellSize: number,
-): string {
-	return `${minLat.toFixed(4)},${maxLat.toFixed(4)},${minLng.toFixed(4)},${maxLng.toFixed(4)},${cellSize}`;
 }
 
 function tileKey(z: number, x: number, y: number, cellSize: number): string {
@@ -76,21 +62,6 @@ function latLngToTile(lat: number, lng: number, z: number): { x: number; y: numb
 			n,
 	);
 	return { x: xtile, y: ytile };
-}
-
-function tileBBox(
-	z: number,
-	x: number,
-	y: number,
-): { minLat: number; minLng: number; maxLat: number; maxLng: number } {
-	const n = 2 ** z;
-	const lon_deg1 = (x / n) * 360 - 180;
-	const lon_deg2 = ((x + 1) / n) * 360 - 180;
-	const lat_rad1 = Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n)));
-	const lat_rad2 = Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 1)) / n)));
-	const lat_deg1 = (lat_rad1 * 180) / Math.PI;
-	const lat_deg2 = (lat_rad2 * 180) / Math.PI;
-	return { minLat: lat_deg2, minLng: lon_deg1, maxLat: lat_deg1, maxLng: lon_deg2 };
 }
 
 function coverTilesForBbox(
@@ -153,19 +124,22 @@ async function fetchTileBytes(z: number, x: number, y: number): Promise<ArrayBuf
 		console.warn("PMTiles URL not configured");
 		return null;
 	}
+	if (circuitOpen) return null;
+
 	try {
 		const resp = await pmtiles.getZxy(z, x, y);
+		failureCount = 0; // Reset on success
 		if (!resp || !resp.data) return null;
 		return resp.data as ArrayBuffer;
 	} catch (e) {
 		console.warn(`PMTiles fetch failed for ${z}/${x}/${y}:`, e);
+		failureCount++;
+		if (failureCount >= MAX_FAILURES) {
+			console.warn("Too many PMTiles failures, opening circuit breaker to prevent spam.");
+			circuitOpen = true;
+		}
 		return null;
 	}
-}
-
-function decodeRoadCellsFromTile(z: number, x: number, y: number, cellSize: number): Set<string> {
-	// This function expects that fetchTileBytes was called and set a global buffer; instead, decode is inlined where bytes exist
-	return new Set();
 }
 
 // Rasterize a line segment into grid cells (reused from viewport logic)
@@ -208,11 +182,16 @@ export async function getRoadCellsForBbox(
 	// Assemble from tile-level caches, then filter to bbox
 	const tiles = coverTilesForBbox(minLat, maxLat, minLng, maxLng, zoom);
 	const union = new Set<string>();
-	for (const { z, x, y } of tiles) {
+
+	// Process tiles in parallel with concurrency limit
+	const CONCURRENCY = 8;
+	const queue = [...tiles];
+
+	const processTile = async (z: number, x: number, y: number) => {
 		let tileCells = await getCachedTileCells(z, x, y, cellSize);
 		if (!tileCells) {
 			const bytes = await fetchTileBytes(z, x, y);
-			if (!bytes) continue;
+			if (!bytes) return;
 			try {
 				const vt = new VectorTile(new Pbf(new Uint8Array(bytes)));
 				const layerNames = Object.keys(vt.layers || {});
@@ -222,9 +201,9 @@ export async function getRoadCellsForBbox(
 					const layer = vt.layers[roadLike];
 					for (let i = 0; i < layer.length; i++) {
 						const feature = layer.feature(i);
-						const gj: any = feature.toGeoJSON(x, y, z);
+						const gj = feature.toGeoJSON(x, y, z);
 						if (gj.geometry.type === "LineString") {
-							const coords: [number, number][] = gj.geometry.coordinates;
+							const coords = gj.geometry.coordinates as [number, number][];
 							for (let i = 0; i < coords.length - 1; i++) {
 								const [lng1, lat1] = coords[i];
 								const [lng2, lat2] = coords[i + 1];
@@ -233,7 +212,7 @@ export async function getRoadCellsForBbox(
 								);
 							}
 						} else if (gj.geometry.type === "MultiLineString") {
-							const lines: [number, number][][] = gj.geometry.coordinates;
+							const lines = gj.geometry.coordinates as [number, number][][];
 							for (const line of lines) {
 								for (let i = 0; i < line.length - 1; i++) {
 									const [lng1, lat1] = line[i];
@@ -255,7 +234,18 @@ export async function getRoadCellsForBbox(
 		if (tileCells) {
 			for (const c of tileCells) union.add(c);
 		}
-	}
+	};
+
+	const workers = Array(Math.min(tiles.length, CONCURRENCY))
+		.fill(null)
+		.map(async () => {
+			while (queue.length > 0) {
+				const tile = queue.shift();
+				if (tile) await processTile(tile.z, tile.x, tile.y);
+			}
+		});
+
+	await Promise.all(workers);
 
 	// Filter by bbox
 	const sw = latLngToMeters(minLat, minLng);

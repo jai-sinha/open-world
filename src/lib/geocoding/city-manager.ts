@@ -1,22 +1,16 @@
-import { point } from "@turf/helpers";
-import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
-import type { Feature, Polygon, MultiPolygon, Position } from "geojson";
-import {
-	latLngToMeters,
-	metersToLatLng,
-	pointToCell,
-	cellKey,
-	cellToPoint,
-	rasterizePolygon,
-} from "../projection";
+import type { Feature, Polygon, MultiPolygon } from "geojson";
+import { metersToLatLng, rasterizePolygon } from "../projection";
 import type { StravaActivity } from "../../types";
 import { cityBoundaryLoader } from "./city-data/loader";
 import { computeCityStats } from "../stats";
 import { getRoadCellsForBbox, setRoadPMTilesURL } from "../tiles";
 import { getPMTilesFilename } from "../pmtiles-mapping";
 
-// TODO: Replace with your actual R2 bucket URL or proxy endpoint
-const TILES_BASE_URL = "https://tiles.open-world.dev";
+// Constants
+const TILES_BASE_URL = "https://pub-fe917f235736482c991c98f959f63e11.r2.dev";
+const NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org";
+const USER_AGENT = "OpenWorld-Exploration/1.0";
+const RATE_LIMIT_DELAY_MS = 1100; // Nominatim requires 1s delay
 
 export interface City {
 	id: string;
@@ -39,6 +33,17 @@ export interface CityStats {
 	source: "bundle" | "nominatim";
 }
 
+interface NominatimAddress {
+	city?: string;
+	town?: string;
+	village?: string;
+	municipality?: string;
+	country: string;
+	state?: string;
+	region?: string;
+	province?: string;
+}
+
 export class CityManager {
 	private cities = new Map<string, City>();
 	private visitedCells: Set<string>;
@@ -46,20 +51,18 @@ export class CityManager {
 	private isProcessing = false;
 	private bundleLoaded = false;
 
-	// Discovery progress tracking (number of unique locations being processed)
+	// Discovery progress tracking
 	private discoveryTotal = 0;
 	private discoveryProcessed = 0;
 
-	// Rate limiting for API calls
-	private lastNominatimRequest = 0;
-	private lastOverpassRequest = 0;
+	// Rate limiting
+	private lastApiRequestTime = 0;
 	private roadCellQueue: City[] = [];
 	private isProcessingRoadCells = false;
 
 	constructor(visitedCells: Set<string>, cellSize: number) {
 		this.visitedCells = visitedCells;
 		this.cellSize = cellSize;
-
 		this.initializeBundle();
 	}
 
@@ -87,111 +90,76 @@ export class CityManager {
 		this.discoveryTotal = 0;
 
 		try {
-			// Ensure bundle is loaded
 			if (!this.bundleLoaded) {
 				await this.initializeBundle();
 			}
 
-			// Group activities by approximate location (0.1 deg ~ 11km) to reduce API calls
-			const locations = new Map<string, [number, number]>();
-			for (const activity of activities) {
-				if (!activity.start_latlng || activity.start_latlng.length < 2) continue;
-				const [lat, lng] = activity.start_latlng;
-				// Round to 1 decimal place
-				const key = `${lat.toFixed(1)},${lng.toFixed(1)}`;
-				if (!locations.has(key)) {
-					locations.set(key, [lat, lng]);
-				}
-			}
-
-			// Process locations to find new cities
-			const uniqueLocations = Array.from(locations.values());
+			const uniqueLocations = this.groupActivitiesByLocation(activities);
 			this.discoveryTotal = uniqueLocations.length;
 
-			// Notify UI listeners that discovery is starting
-			if (typeof window !== "undefined") {
-				window.dispatchEvent(
-					new CustomEvent("city-discovery-start", { detail: { total: this.discoveryTotal } }),
-				);
-			}
+			this.notifyDiscoveryStart();
 
-			// Process each location and report progress after each one finishes
 			for (const [lat, lng] of uniqueLocations) {
 				await this.identifyCity(lat, lng);
-
-				// update progress counters and notify listeners
 				this.discoveryProcessed++;
 				onProgress?.(this.discoveryProcessed, this.discoveryTotal);
-
-				if (typeof window !== "undefined") {
-					window.dispatchEvent(
-						new CustomEvent("city-discovery-progress", {
-							detail: { processed: this.discoveryProcessed, total: this.discoveryTotal },
-						}),
-					);
-				}
+				this.notifyDiscoveryProgress();
 			}
 
 			return this.getStats();
 		} finally {
 			this.isProcessing = false;
+			this.notifyDiscoveryComplete();
+		}
+	}
 
-			// Dispatch completion event with final stats
-			if (typeof window !== "undefined") {
-				window.dispatchEvent(
-					new CustomEvent("city-discovery-complete", { detail: { stats: this.getStats() } }),
-				);
+	private groupActivitiesByLocation(activities: StravaActivity[]): Array<[number, number]> {
+		const locations = new Map<string, [number, number]>();
+		for (const activity of activities) {
+			if (!activity.start_latlng || activity.start_latlng.length < 2) continue;
+			const [lat, lng] = activity.start_latlng;
+			// Round to 1 decimal place (~11km) to group nearby starts
+			const key = `${lat.toFixed(1)},${lng.toFixed(1)}`;
+			if (!locations.has(key)) {
+				locations.set(key, [lat, lng]);
 			}
 		}
+		return Array.from(locations.values());
 	}
 
 	private async identifyCity(lat: number, lng: number) {
 		try {
-			// Respect Nominatim rate limit (1 req/sec)
-			const timeSinceLastNominatim = Date.now() - this.lastNominatimRequest;
-			if (timeSinceLastNominatim < 1100) {
-				await new Promise((resolve) => setTimeout(resolve, 1100 - timeSinceLastNominatim));
-			}
+			await this.enforceRateLimit();
 
-			// 1. Reverse geocode to get city name
 			const response = await fetch(
-				`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10`,
-				{ headers: { "User-Agent": "OpenWorld-Exploration/1.0" } },
+				`${NOMINATIM_BASE_URL}/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10`,
+				{ headers: { "User-Agent": USER_AGENT } },
 			);
-			this.lastNominatimRequest = Date.now();
+			this.lastApiRequestTime = Date.now();
 
 			if (!response.ok) return;
 
 			const data = await response.json();
-			const address = data.address;
+			const address = data.address as NominatimAddress;
 
-			// Try to find the most relevant administrative boundary name
 			const cityName = address.city || address.town || address.village || address.municipality;
 			const country = address.country;
 			const region = address.state || address.region || address.province;
 
-			if (!cityName) return;
+			if (!cityName || !country) return;
 
 			const cityId = `${cityName}, ${country}`;
-
-			// If we already track this city, skip
 			if (this.cities.has(cityId)) return;
 
-			// 2. Try to fetch boundary from bundle first
+			// Try bundle first
 			const bundleBoundary = cityBoundaryLoader.getByID(cityId);
-			if (bundleBoundary && bundleBoundary.geometry) {
-				this.processCityBoundary(
-					bundleBoundary.geometry,
-					cityId,
-					cityName,
-					country,
-					region,
-					"bundle",
-				);
+			const geom = bundleBoundary?.geometry;
+			if (geom && (geom.type === "Polygon" || geom.type === "MultiPolygon")) {
+				this.createCity(geom, cityId, cityName, country, region, "bundle");
 				return;
 			}
 
-			// 3. Fall back to Nominatim if not in bundle
+			// Fallback to Nominatim
 			await this.fetchCityBoundaryFromNominatim(cityName, country, region, cityId);
 		} catch (e) {
 			console.warn("City identification failed:", e);
@@ -205,28 +173,22 @@ export class CityManager {
 		cityId: string,
 	) {
 		try {
-			// Respect Nominatim rate limit (1 req/sec)
-			const timeSinceLastNominatim = Date.now() - this.lastNominatimRequest;
-			if (timeSinceLastNominatim < 1100) {
-				await new Promise((resolve) => setTimeout(resolve, 1100 - timeSinceLastNominatim));
-			}
+			await this.enforceRateLimit();
 
-			// Request Polygon/MultiPolygon GeoJSON
-			const query = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+			const query = `${NOMINATIM_BASE_URL}/search?q=${encodeURIComponent(
 				city + ", " + country,
 			)}&format=json&polygon_geojson=1&limit=1`;
 
-			const res = await fetch(query, { headers: { "User-Agent": "OpenWorld-Exploration/1.0" } });
-			this.lastNominatimRequest = Date.now();
+			const res = await fetch(query, { headers: { "User-Agent": USER_AGENT } });
+			this.lastApiRequestTime = Date.now();
 
 			if (!res.ok) return;
 
 			const data = await res.json();
-			if (data && data.length > 0 && data[0].geojson) {
+			if (data?.[0]?.geojson) {
 				const geojson = data[0].geojson;
-
 				if (geojson.type === "Polygon" || geojson.type === "MultiPolygon") {
-					this.processCityBoundary(geojson, cityId, city, country, region, "nominatim");
+					this.createCity(geojson, cityId, city, country, region, "nominatim");
 				}
 			}
 		} catch (e) {
@@ -234,8 +196,8 @@ export class CityManager {
 		}
 	}
 
-	private processCityBoundary(
-		geometry: any,
+	private createCity(
+		geometry: Polygon | MultiPolygon,
 		cityId: string,
 		cityName: string,
 		country: string,
@@ -249,7 +211,6 @@ export class CityManager {
 				geometry,
 			};
 
-			// Rasterize the polygon into grid cells
 			const gridCells = rasterizePolygon(feature, this.cellSize);
 
 			const city: City = {
@@ -260,13 +221,11 @@ export class CityManager {
 				region,
 				boundary: feature,
 				gridCells,
-				roadCells: null, // Will be computed async
+				roadCells: null,
 				source,
 			};
 
 			this.cities.set(cityId, city);
-
-			// Queue road cell computation (will be processed sequentially)
 			this.queueRoadCellComputation(city);
 		} catch (e) {
 			console.warn(`Failed to process boundary for ${cityId}:`, e);
@@ -285,13 +244,9 @@ export class CityManager {
 
 		while (this.roadCellQueue.length > 0) {
 			const city = this.roadCellQueue.shift()!;
-
-			// Respect Overpass rate limit (1 req/sec)
-			const timeSinceLastOverpass = Date.now() - this.lastOverpassRequest;
-			if (timeSinceLastOverpass < 1100) {
-				await new Promise((resolve) => setTimeout(resolve, 1100 - timeSinceLastOverpass));
-			}
-
+			// getRoadCellsForBbox hits R2, which doesn't need strict 1s throttling like Nominatim.
+			// But let's keep a small delay to yield to UI.
+			await new Promise((resolve) => setTimeout(resolve, 50));
 			await this.computeRoadCellsForCity(city);
 		}
 
@@ -308,24 +263,18 @@ export class CityManager {
 
 			setRoadPMTilesURL(`${TILES_BASE_URL}/${pmtilesFile}`);
 
-			// Get bbox of city's grid cells
 			const bounds = this.getCityBounds(city.gridCells);
 			if (!bounds) return;
 
-			// Convert grid bounds back to lat/lng
-			const swMeters = {
-				x: bounds.minX * this.cellSize + this.cellSize / 2,
-				y: bounds.minY * this.cellSize + this.cellSize / 2,
-			};
-			const neMeters = {
-				x: bounds.maxX * this.cellSize + this.cellSize / 2,
-				y: bounds.maxY * this.cellSize + this.cellSize / 2,
-			};
+			const swLatLng = metersToLatLng(
+				bounds.minX * this.cellSize + this.cellSize / 2,
+				bounds.minY * this.cellSize + this.cellSize / 2,
+			);
+			const neLatLng = metersToLatLng(
+				bounds.maxX * this.cellSize + this.cellSize / 2,
+				bounds.maxY * this.cellSize + this.cellSize / 2,
+			);
 
-			const swLatLng = metersToLatLng(swMeters.x, swMeters.y);
-			const neLatLng = metersToLatLng(neMeters.x, neMeters.y);
-
-			// Fetch road cells from tile source
 			const roadCells = await getRoadCellsForBbox(
 				Math.min(swLatLng.lat, neLatLng.lat),
 				Math.max(swLatLng.lat, neLatLng.lat),
@@ -334,18 +283,13 @@ export class CityManager {
 				this.cellSize,
 			);
 
-			this.lastOverpassRequest = Date.now();
-
-			// Store road cells and update stats
 			city.roadCells = roadCells;
 		} catch (e) {
 			console.warn(`Failed to compute road cells for ${city.id}:`, e);
 		}
 	}
 
-	private getCityBounds(
-		cells: Set<string>,
-	): { minX: number; minY: number; maxX: number; maxY: number } | null {
+	private getCityBounds(cells: Set<string>) {
 		if (cells.size === 0) return null;
 
 		let minX = Infinity;
@@ -366,8 +310,42 @@ export class CityManager {
 		return { minX, minY, maxX, maxY };
 	}
 
+	private async enforceRateLimit() {
+		const timeSinceLast = Date.now() - this.lastApiRequestTime;
+		if (timeSinceLast < RATE_LIMIT_DELAY_MS) {
+			await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_DELAY_MS - timeSinceLast));
+		}
+	}
+
+	// --- Event Dispatchers ---
+
+	private notifyDiscoveryStart() {
+		if (typeof window !== "undefined") {
+			window.dispatchEvent(
+				new CustomEvent("city-discovery-start", { detail: { total: this.discoveryTotal } }),
+			);
+		}
+	}
+
+	private notifyDiscoveryProgress() {
+		if (typeof window !== "undefined") {
+			window.dispatchEvent(
+				new CustomEvent("city-discovery-progress", {
+					detail: { processed: this.discoveryProcessed, total: this.discoveryTotal },
+				}),
+			);
+		}
+	}
+
+	private notifyDiscoveryComplete() {
+		if (typeof window !== "undefined") {
+			window.dispatchEvent(
+				new CustomEvent("city-discovery-complete", { detail: { stats: this.getStats() } }),
+			);
+		}
+	}
+
 	public getStats(): CityStats[] {
-		// While city discovery is running, return a single "progress" stat
 		if (this.isProcessing) {
 			return [
 				{
@@ -381,8 +359,6 @@ export class CityManager {
 				},
 			];
 		}
-
-		// Delegate to shared stats computation
 		return computeCityStats(this.cities.values(), this.visitedCells);
 	}
 

@@ -1,4 +1,5 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
+import type { City, CityStats } from "./geocoding/city-manager";
 import { latLngToMeters, pointToCell, cellKey, parseCellKey } from "./projection";
 
 // ============ Core visited cell metrics ============
@@ -16,6 +17,7 @@ export function computeVisitedCountForCells(
 		}
 		const { x, y } = parseCellKey(cell);
 		let found = false;
+		// Fuzzy match: check 3x3 grid around the target cell to account for GPS drift
 		for (let dx = -1; dx <= 1; dx++) {
 			for (let dy = -1; dy <= 1; dy++) {
 				if (dx === 0 && dy === 0) continue;
@@ -75,8 +77,11 @@ function buildRoadCellsInViewport(
 		if (feature.geometry.type !== "LineString" && feature.geometry.type !== "MultiLineString")
 			continue;
 
+		// Cast to any to access coordinates easily for both LineString and MultiLineString
+		// In a stricter setup, we would use type guards for GeoJSON Geometry
 		const geometry = feature.geometry as any;
-		const coordsList = geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
+		const coordsList =
+			geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
 
 		for (const coords of coordsList) {
 			for (let i = 0; i < coords.length - 1; i++) {
@@ -136,6 +141,8 @@ export function calculateViewportStats(
 	const minCell = pointToCell(minX, minY, cellSize);
 	const maxCell = pointToCell(maxX, maxY, cellSize);
 	const cellCount = Math.abs((maxCell.x - minCell.x) * (maxCell.y - minCell.y));
+
+	// If viewport covers too many cells, skip calculation to avoid freezing UI
 	if (cellCount > 2_000_000) return -1;
 
 	const roadCells = buildRoadCellsInViewport(map, cellSize, minX, maxX, minY, maxY);
@@ -145,13 +152,7 @@ export function calculateViewportStats(
 
 // ============ City stats ============
 
-import type { City } from "./geocoding/city-manager";
-import type { CityStats } from "./geocoding/city-manager";
-
-export function computeCityStats(
-	cities: Iterable<City>,
-	visitedCells: Set<string>,
-): CityStats[] {
+export function computeCityStats(cities: Iterable<City>, visitedCells: Set<string>): CityStats[] {
 	const stats: CityStats[] = [];
 	for (const city of cities) {
 		// Only show stats if road cells are computed
