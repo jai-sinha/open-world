@@ -182,6 +182,12 @@ class CityProcessor {
 
 			const percentage = computeVisitedPercentageForCells(roadCells, this.visitedCells);
 
+			if (percentage === 0 && roadCells.size > 0 && this.visitedCells.size > 0) {
+				console.debug(
+					`Viewport 0% debug: RoadCells=${roadCells.size}, Visited=${this.visitedCells.size}`,
+				);
+			}
+
 			self.postMessage({
 				type: "VIEWPORT_STATS",
 				payload: { percentage },
@@ -229,6 +235,11 @@ class CityProcessor {
 				await this.identifyCity(lat, lng);
 				this.discoveryProcessed++;
 				this.postProgress();
+			}
+
+			// Wait for road cell computation to finish
+			while (this.isProcessingRoadCells || this.roadCellQueue.length > 0) {
+				await new Promise((resolve) => setTimeout(resolve, 200));
 			}
 
 			this.postStats("COMPLETE");
@@ -363,6 +374,8 @@ class CityProcessor {
 			};
 
 			this.cities.set(cityId, city);
+			this.discoveryTotal++;
+			this.postProgress();
 			this.queueRoadCellComputation(city);
 		} catch (e) {
 			console.warn(`Failed to process boundary for ${cityId}:`, e);
@@ -430,8 +443,14 @@ class CityProcessor {
 				}
 			}
 			city.roadCells = filteredRoadCells;
+			console.debug(
+				`Computed road cells for ${city.id}: ${filteredRoadCells.size} cells (from ${roadCells.size} raw)`,
+			);
 		} catch (e) {
 			console.warn(`Failed to compute road cells for ${city.id}:`, e);
+		} finally {
+			this.discoveryProcessed++;
+			this.postProgress();
 		}
 	}
 
@@ -474,6 +493,9 @@ class CityProcessor {
 		// Note: computeCityStats expects Iterable<City> where City matches the interface in stats.ts
 		// Our local City interface is structurally compatible.
 		const stats = computeCityStats(this.cities.values(), this.visitedCells);
+		if (stats.length > 0) {
+			console.debug(`Posting stats (${type}):`, stats);
+		}
 		self.postMessage({
 			type,
 			payload: { stats },

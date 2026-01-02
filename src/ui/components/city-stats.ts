@@ -9,6 +9,7 @@ export class CityStatsComponent {
 	private processingText?: HTMLElement;
 	private processingBarBg?: HTMLElement;
 	private processingBarFill?: HTMLElement;
+	private isProcessing = false;
 
 	constructor() {
 		this.element = document.createElement("div");
@@ -32,6 +33,7 @@ export class CityStatsComponent {
 	public showProgress(current: number, total: number): void {
 		// If no cities to process, show empty message
 		if (total === 0) {
+			this.isProcessing = false;
 			this.listContainer.innerHTML = '<div class="stat-item">No cities found</div>';
 			this.clearProgress();
 			return;
@@ -39,9 +41,12 @@ export class CityStatsComponent {
 
 		// When finished or current >= total, clear processing flag
 		if (current >= total) {
+			this.isProcessing = false;
 			this.clearProgress();
 			return;
 		}
+
+		this.isProcessing = true;
 
 		// Create the UI if not already present
 		if (!this.processingText || !this.processingBarBg || !this.processingBarFill) {
@@ -85,6 +90,9 @@ export class CityStatsComponent {
 			this.showProgress(stats[0].visitedCount, stats[0].totalCells);
 			return;
 		}
+
+		// If processing is active, do not update the list yet
+		if (this.isProcessing) return;
 
 		if (stats.length === 0) {
 			this.listContainer.innerHTML = '<div class="stat-item">No cities found</div>';
