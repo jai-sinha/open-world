@@ -148,6 +148,30 @@
 				-webkit-overflow-scrolling: touch;
 			}
 
+			#footer {
+				padding: 12px;
+				background: #f8f9fa;
+				border-top: 1px solid var(--border-color);
+				font-size: 11px;
+				color: var(--text-secondary);
+				text-align: center;
+				flex-shrink: 0;
+				display: flex;
+				flex-wrap: wrap;
+				justify-content: center;
+				gap: 12px;
+			}
+
+			#footer a {
+				color: inherit;
+				text-decoration: none;
+			}
+
+			#footer a:hover {
+				text-decoration: underline;
+				color: var(--primary-color);
+			}
+
 			.exploration-controls {
 				padding: 20px;
 			}
@@ -475,6 +499,19 @@
 
 				<div id="controls">
 					<!-- Controls will be dynamically inserted here -->
+				</div>
+
+				<div id="footer">
+					<a href="https://github.com/jai-sinha/open-world" target="_blank">GitHub</a>
+					<span>•</span>
+					<a href="https://www.strava.com" target="_blank">Powered by Strava</a>
+					<span>•</span>
+					<span
+						>©
+						<a href="https://www.openstreetmap.org/copyright" target="_blank"
+							>OpenStreetMap</a
+						></span
+					>
 				</div>
 			</div>
 
