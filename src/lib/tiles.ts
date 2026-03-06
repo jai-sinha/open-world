@@ -55,7 +55,7 @@ function tileKey(z: number, x: number, y: number, cellSize: number): string {
 }
 
 // WebMercator helpers for tile math
-function latLngToTile(lat: number, lng: number, z: number): { x: number; y: number } {
+export function latLngToTile(lat: number, lng: number, z: number): { x: number; y: number } {
 	const n = 2 ** z;
 	const xtile = Math.floor(((lng + 180) / 360) * n);
 	const ytile = Math.floor(

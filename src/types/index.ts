@@ -128,12 +128,3 @@ export interface LatLng {
 	lat: number;
 	lng: number;
 }
-
-export interface RegionMap {
-	[region: string]: string;
-}
-
-export interface CountryMap {
-	default?: string;
-	regions?: RegionMap;
-}

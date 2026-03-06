@@ -4,14 +4,16 @@ import type { Feature, Polygon, MultiPolygon } from "geojson";
 // Export interfaces used by other modules (e.g. stats.ts)
 export interface City {
 	id: string;
+	osmId?: string;
 	name: string;
 	displayName: string;
-	country: string;
+	country?: string;
 	region?: string;
 	boundary: Feature<Polygon | MultiPolygon>;
 	gridCells: Set<string>; // All cells in polygon
 	roadCells: Set<string> | null; // Road-only cells (async computed)
-	source: "nominatim";
+	source: "self-hosted" | "nominatim";
+	center?: { lat: number; lng: number }; // Cache center for distance lookups
 }
 
 export interface CityStats {
@@ -20,14 +22,14 @@ export interface CityStats {
 	totalCells: number;
 	visitedCount: number;
 	percentage: number;
-	source: "nominatim";
+	source: "self-hosted" | "nominatim";
 }
 
 // Worker Message Types (Internal)
 type CityProcessorResponse =
 	| {
 			type: "PROGRESS";
-			payload: { processed: number; total: number };
+			payload: { percentage: number };
 	  }
 	| {
 			type: "COMPLETE";
@@ -46,15 +48,17 @@ export class CityManager {
 	private worker: Worker;
 	private visitedCells: Set<string>;
 	private cellSize: number;
+	private tilesBaseUrl?: string;
 	private latestStats: CityStats[] = [];
-	private discoveryProgress = { processed: 0, total: 0 };
-	private onProgressCallback?: (processed: number, total: number) => void;
+	private discoveryProgress = 0;
+	private onProgressCallback?: (percentage: number) => void;
 	private discoveryPromiseResolve?: (stats: CityStats[]) => void;
 	private viewportStatsResolve?: (percentage: number) => void;
 
-	constructor(visitedCells: Set<string>, cellSize: number) {
+	constructor(visitedCells: Set<string>, cellSize: number, tilesBaseUrl?: string) {
 		this.visitedCells = visitedCells;
 		this.cellSize = cellSize;
+		this.tilesBaseUrl = tilesBaseUrl;
 
 		// Initialize the worker
 		this.worker = new Worker("/worker/city-processor.js", {
@@ -66,14 +70,14 @@ export class CityManager {
 
 			switch (type) {
 				case "PROGRESS":
-					this.discoveryProgress = { processed: payload.processed, total: payload.total };
-					this.onProgressCallback?.(payload.processed, payload.total);
-					this.notifyDiscoveryProgress(payload.processed, payload.total);
+					this.discoveryProgress = payload.percentage;
+					this.onProgressCallback?.(payload.percentage);
+					this.notifyDiscoveryProgress(payload.percentage);
 					break;
 				case "STATS_UPDATE":
 					this.latestStats = payload.stats;
-					// Notify UI of incremental updates (re-using complete event for list refresh)
-					this.notifyDiscoveryComplete();
+					// Notify UI of incremental updates (separate event to avoid premature list display)
+					this.notifyStatsUpdate();
 					break;
 				case "COMPLETE":
 					this.latestStats = payload.stats;
@@ -100,11 +104,11 @@ export class CityManager {
 
 	public async discoverCitiesFromActivities(
 		activities: StravaActivity[],
-		onProgress?: (processed: number, total: number) => void,
+		onProgress?: (percentage: number) => void,
 	): Promise<CityStats[]> {
 		this.onProgressCallback = onProgress;
 		this.latestStats = [];
-		this.discoveryProgress = { processed: 0, total: 0 };
+		this.discoveryProgress = 0;
 
 		// Notify start (approximate, worker will refine total)
 		this.notifyDiscoveryStart(0);
@@ -117,6 +121,7 @@ export class CityManager {
 					activities,
 					visitedCells: Array.from(this.visitedCells),
 					cellSize: this.cellSize,
+					tilesBaseUrl: this.tilesBaseUrl,
 				},
 			});
 		});
@@ -148,7 +153,7 @@ export class CityManager {
 		return this.latestStats;
 	}
 
-	public getDiscoveryProgress(): { processed: number; total: number } {
+	public getDiscoveryProgress(): number {
 		return this.discoveryProgress;
 	}
 
@@ -164,11 +169,11 @@ export class CityManager {
 		}
 	}
 
-	private notifyDiscoveryProgress(processed: number, total: number) {
+	private notifyDiscoveryProgress(percentage: number) {
 		if (typeof window !== "undefined") {
 			window.dispatchEvent(
 				new CustomEvent("city-discovery-progress", {
-					detail: { processed, total },
+					detail: { percentage },
 				}),
 			);
 		}
@@ -178,6 +183,14 @@ export class CityManager {
 		if (typeof window !== "undefined") {
 			window.dispatchEvent(
 				new CustomEvent("city-discovery-complete", { detail: { stats: this.latestStats } }),
+			);
+		}
+	}
+
+	private notifyStatsUpdate() {
+		if (typeof window !== "undefined") {
+			window.dispatchEvent(
+				new CustomEvent("city-stats-update", { detail: { stats: this.latestStats } }),
 			);
 		}
 	}

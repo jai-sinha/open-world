@@ -39,6 +39,7 @@ export class Controls {
 	private cityDiscoveryStartHandler?: (e: Event) => void;
 	private cityDiscoveryProgressHandler?: (e: Event) => void;
 	private cityDiscoveryCompleteHandler?: (e: Event) => void;
+	private cityStatsUpdateHandler?: (e: Event) => void;
 
 	constructor(element: HTMLElement, options: ControlsOptions) {
 		this.container = element;
@@ -85,22 +86,28 @@ export class Controls {
 
 	private setupCityDiscoveryListeners() {
 		if (typeof window !== "undefined") {
-			this.cityDiscoveryStartHandler = (e: Event) => {
-				const evt = e as CustomEvent<{ total: number }>;
-				this.cityStats.showProgress(0, evt.detail.total);
+			this.cityDiscoveryStartHandler = () => {
+				this.cityStats.showProgress(0);
 			};
 			this.cityDiscoveryProgressHandler = (e: Event) => {
-				const evt = e as CustomEvent<{ processed: number; total: number }>;
-				this.cityStats.showProgress(evt.detail.processed, evt.detail.total);
+				const evt = e as CustomEvent<{ percentage: number }>;
+				this.cityStats.showProgress(evt.detail.percentage);
 			};
 			this.cityDiscoveryCompleteHandler = (e: Event) => {
 				const evt = e as CustomEvent<{ stats: any[] }>;
-				if (evt.detail?.stats) this.cityStats.updateStats(evt.detail.stats);
+				// Force update on completion - processing is done
+				if (evt.detail?.stats) this.cityStats.updateStats(evt.detail.stats, true);
+			};
+			this.cityStatsUpdateHandler = (e: Event) => {
+				const evt = e as CustomEvent<{ stats: any[] }>;
+				// Incremental update - respect processing state (don't force)
+				if (evt.detail?.stats) this.cityStats.updateStats(evt.detail.stats, false);
 			};
 
 			window.addEventListener("city-discovery-start", this.cityDiscoveryStartHandler);
 			window.addEventListener("city-discovery-progress", this.cityDiscoveryProgressHandler);
 			window.addEventListener("city-discovery-complete", this.cityDiscoveryCompleteHandler);
+			window.addEventListener("city-stats-update", this.cityStatsUpdateHandler);
 		}
 	}
 
@@ -127,8 +134,8 @@ export class Controls {
 	/**
 	 * Show city processing progress
 	 */
-	showCityProcessing(current: number, total: number): void {
-		this.cityStats.showProgress(current, total);
+	showCityProcessing(percentage: number): void {
+		this.cityStats.showProgress(percentage);
 	}
 
 	/**
@@ -210,6 +217,8 @@ export class Controls {
 				window.removeEventListener("city-discovery-progress", this.cityDiscoveryProgressHandler);
 			if (this.cityDiscoveryCompleteHandler)
 				window.removeEventListener("city-discovery-complete", this.cityDiscoveryCompleteHandler);
+			if (this.cityStatsUpdateHandler)
+				window.removeEventListener("city-stats-update", this.cityStatsUpdateHandler);
 		}
 
 		this.container.innerHTML = "";

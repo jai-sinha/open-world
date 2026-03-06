@@ -9,8 +9,8 @@ const PUBLIC_DIR = join(__dirname, "..", "public");
 const STRAVA_CLIENT_ID = Bun.env.STRAVA_CLIENT_ID || "";
 const STRAVA_CLIENT_SECRET = Bun.env.STRAVA_CLIENT_SECRET || "";
 const STRAVA_VERIFY_TOKEN = "STRAVA";
-const GEOAPIFY_KEY = Bun.env.GEOAPIFY_KEY || "";
 const PORT = parseInt(Bun.env.PORT || "3000", 10);
+const TILES_BASE_URL = Bun.env.TILES_BASE_URL || "";
 
 // Check for production flag
 const args = Bun.argv;
@@ -62,13 +62,7 @@ Bun.serve({
 
 		// API Routes
 		if (path === "/api/config" && req.method === "GET") {
-			return new Response(JSON.stringify({ STRAVA_CLIENT_ID }), {
-				headers: { ...corsHeaders, "Content-Type": "application/json" },
-			});
-		}
-
-		if (path === "/api/geoapify/key" && req.method === "GET") {
-			return new Response(JSON.stringify({ key: GEOAPIFY_KEY }), {
+			return new Response(JSON.stringify({ STRAVA_CLIENT_ID, TILES_BASE_URL }), {
 				headers: { ...corsHeaders, "Content-Type": "application/json" },
 			});
 		}

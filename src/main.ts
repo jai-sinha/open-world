@@ -46,6 +46,7 @@ class ExplorationMapApp {
 	private explorationLayer?: ExplorationCanvasLayer;
 	private routeLayer?: RouteOverlayLayer;
 	private cityManager?: CityManager;
+	private tilesBaseUrl?: string;
 
 	// State
 	private visitedCells = new Set<string>();
@@ -66,7 +67,11 @@ class ExplorationMapApp {
 		this.initializeWorker();
 		this.initializeControls();
 
-		this.cityManager = new CityManager(this.visitedCells, this.currentConfig.cellSize);
+		this.cityManager = new CityManager(
+			this.visitedCells,
+			this.currentConfig.cellSize,
+			this.tilesBaseUrl,
+		);
 
 		await this.loadSavedState();
 
@@ -77,7 +82,9 @@ class ExplorationMapApp {
 		const res = await fetch("/api/config");
 		const config = await res.json();
 		stravaClientId = config.STRAVA_CLIENT_ID;
-		if (config.ROAD_PM_TILES_URL) setRoadPMTilesURL(config.ROAD_PM_TILES_URL);
+		const tilesUrl = config.TILES_BASE_URL || config.ROAD_PM_TILES_URL;
+		this.tilesBaseUrl = tilesUrl;
+		if (tilesUrl) setRoadPMTilesURL(tilesUrl);
 	}
 
 	private async initializeMap(): Promise<void> {
@@ -193,8 +200,8 @@ class ExplorationMapApp {
 			this.cityManager?.updateVisitedCells(this.visitedCells);
 			if (this.allActivities.length > 0) {
 				this.cityManager
-					?.discoverCitiesFromActivities(this.allActivities, (processed, total) => {
-						this.controls?.showCityProcessing(processed, total);
+					?.discoverCitiesFromActivities(this.allActivities, (percentage) => {
+						this.controls?.showCityProcessing(percentage);
 					})
 					.then((stats) => {
 						this.controls?.updateCityStats(stats);
@@ -288,8 +295,8 @@ class ExplorationMapApp {
 			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
 			this.cityManager
-				?.discoverCitiesFromActivities(activities, (processed, total) => {
-					this.controls?.showCityProcessing(processed, total);
+				?.discoverCitiesFromActivities(activities, (percentage) => {
+					this.controls?.showCityProcessing(percentage);
 				})
 				.then((stats) => {
 					this.controls?.updateCityStats(stats);
@@ -459,11 +466,15 @@ class ExplorationMapApp {
 		this.currentConfig = { ...this.currentConfig, ...config };
 		if (config.cellSize && this.explorationLayer) {
 			this.explorationLayer.setCellSize(config.cellSize);
-			this.cityManager = new CityManager(this.visitedCells, this.currentConfig.cellSize);
+			this.cityManager = new CityManager(
+				this.visitedCells,
+				this.currentConfig.cellSize,
+				this.tilesBaseUrl,
+			);
 			if (this.allActivities.length > 0) {
 				this.cityManager
-					.discoverCitiesFromActivities(this.allActivities, (processed, total) =>
-						this.controls?.showCityProcessing(processed, total),
+					.discoverCitiesFromActivities(this.allActivities, (percentage) =>
+						this.controls?.showCityProcessing(percentage),
 					)
 					.then((stats) => this.controls?.updateCityStats(stats));
 			}

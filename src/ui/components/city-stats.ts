@@ -30,20 +30,17 @@ export class CityStatsComponent {
 		content.appendChild(this.listContainer);
 	}
 
-	public showProgress(current: number, total: number): void {
-		// If no cities to process, show empty message
-		if (total === 0) {
+	public showProgress(percentage: number): void {
+		// When finished (100%), clear processing flag
+		if (percentage >= 100) {
 			this.isProcessing = false;
-			this.listContainer.innerHTML = '<div class="stat-item">No cities found</div>';
 			this.clearProgress();
 			return;
 		}
 
-		// When finished or current >= total, clear processing flag
-		if (current >= total) {
-			this.isProcessing = false;
-			this.clearProgress();
-			return;
+		// Starting processing - clear the list container to avoid showing stale "No cities found"
+		if (!this.isProcessing) {
+			this.listContainer.innerHTML = "";
 		}
 
 		this.isProcessing = true;
@@ -77,25 +74,29 @@ export class CityStatsComponent {
 			this.progressContainer.appendChild(barBg);
 		}
 
-		this.processingText.textContent = `Processing cities: ${current} / ${total}`;
-		const pct = total > 0 ? (current / total) * 100 : 0;
+		this.processingText.textContent = `Processing cities: ${percentage.toFixed(0)}%`;
 		if (this.processingBarFill) {
-			this.processingBarFill.style.width = `${pct}%`;
+			this.processingBarFill.style.width = `${percentage}%`;
 		}
 	}
 
-	public updateStats(stats: any[]): void {
+	public updateStats(stats: any[], forceUpdate = false): void {
 		// Handle discovery sentinel (CityManager may return a progress stat while discovering)
 		if (stats.length === 1 && stats[0].cityId === "processing") {
-			this.showProgress(stats[0].visitedCount, stats[0].totalCells);
+			const pct = stats[0].totalCells > 0 ? (stats[0].visitedCount / stats[0].totalCells) * 100 : 0;
+			this.showProgress(pct);
 			return;
 		}
 
-		// If processing is active, do not update the list yet
-		if (this.isProcessing) return;
+		// If processing is active, do not update the list yet unless forced
+		// This prevents partial/incomplete city lists from flashing during processing
+		if (this.isProcessing && !forceUpdate) return;
 
 		if (stats.length === 0) {
-			this.listContainer.innerHTML = '<div class="stat-item">No cities found</div>';
+			// Only show "no cities" if we're not processing
+			if (!this.isProcessing) {
+				this.listContainer.innerHTML = '<div class="stat-item">No cities found</div>';
+			}
 			return;
 		}
 

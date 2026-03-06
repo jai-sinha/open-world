@@ -5,7 +5,7 @@ A client-side MapLibre-based exploration map that visualizes all your Strava act
 ## Features
 
 - **Stat Tracking**: See your percentage of explored roads and paths in any area, and your most explored cities!
-**Unexplored Areas**: Identify roads and paths you haven't ridden, run or walked yet
+- **Unexplored Areas**: Identify roads and paths you haven't ridden, run or walked yet
 - **Interactivity**: Hover a route to see quick info, or click it to open a sidebar with more details
 - **Privacy Controls**: Remove start/finishes, skip private activities, and no data is sent to any server
 - **Client-First Architecture**: All processing happens in your browser using Web Workers
