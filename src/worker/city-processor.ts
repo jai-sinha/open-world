@@ -159,10 +159,7 @@ export interface City {
 	osmId: string;
 	name: string;
 	displayName: string;
-	country?: string;
-	region?: string;
 	boundary: Feature<Polygon | MultiPolygon>;
-	gridCells: Set<string>; // All cells in polygon
 	roadCells: Set<string> | null; // Road-only cells (async computed)
 	roadTiles: string; // PMTiles filename for road data, e.g. "europe.pmtiles"
 	source: "self-hosted";
@@ -543,15 +540,12 @@ class CityProcessor {
 				center = { lat: fallbackLat, lng: fallbackLng };
 			}
 
-			// We no longer pre-compute gridCells - road cell filtering uses direct point-in-polygon
-			// This avoids the expensive rasterizePolygon call for large cities
 			const city: City = {
 				id: lookupResult.osmId,
 				osmId: lookupResult.osmId,
 				name: lookupResult.name,
 				displayName: lookupResult.name,
 				boundary: feature,
-				gridCells: new Set<string>(), // Empty - not used anymore
 				roadCells: null,
 				roadTiles: lookupResult.roadTiles,
 				source: "self-hosted",

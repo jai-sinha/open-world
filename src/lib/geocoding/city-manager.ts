@@ -7,10 +7,7 @@ export interface City {
 	osmId?: string;
 	name: string;
 	displayName: string;
-	country?: string;
-	region?: string;
 	boundary: Feature<Polygon | MultiPolygon>;
-	gridCells: Set<string>; // All cells in polygon
 	roadCells: Set<string> | null; // Road-only cells (async computed)
 	source: "self-hosted" | "nominatim";
 	center?: { lat: number; lng: number }; // Cache center for distance lookups
