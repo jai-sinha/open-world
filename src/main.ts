@@ -569,7 +569,7 @@ const init = async () => {
 		console.log("App initialized");
 	} catch (e) {
 		console.error("Init failed:", e);
-		alert("Failed to initialize application.");
+		alert(`Failed to initialize application: ${e instanceof Error ? e.message : String(e)}`);
 	}
 };
 

@@ -1,7 +1,7 @@
 {
 	"name": "open-world-strava",
-	"version": "0.1.0",
-	"description": "Client-side MapLibre exploration map for Strava activities with Web Workers and IndexedDB",
+	"version": "1.0.0",
+	"description": "Client-side MapLibre exploration map for Strava activities",
 	"type": "module",
 	"homepage": "openworld.jsinha.com",
 	"repository": {
@@ -11,7 +11,7 @@
 	"bugs": {
 		"url": "https://github.com/jai-sinha/open-world/issues"
 	},
-	"author": "Jai Sinha <jaisinha219@gmail.com>",
+	"author": "Jai Sinha <me@jsinha.com>",
 	"license": "MIT",
 	"engines": {
 		"bun": "^1.0.0"
@@ -50,7 +50,10 @@
 		"client-side",
 		"webgl",
 		"map",
-		"visualization"
+		"visualization",
+		"r2",
+		"geojson",
+		"vector-tiles"
 	],
 	"files": [
 		"dist",
