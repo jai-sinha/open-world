@@ -1,5 +1,6 @@
 import type { City, CityStats } from "./geocoding/city-manager";
 import { cellKey, parseCellKey } from "./projection";
+import { isWasmLoaded, countVisitedFuzzySync } from "./wasm-bridge";
 
 // ============ Core visited cell metrics ============
 
@@ -8,6 +9,7 @@ export function computeVisitedCountForCells(
 	visitedCells: Set<string>,
 ): number {
 	if (targetCells.size === 0) return 0;
+	if (isWasmLoaded()) return countVisitedFuzzySync(targetCells, visitedCells);
 	let visited = 0;
 	for (const cell of targetCells) {
 		if (visitedCells.has(cell)) {

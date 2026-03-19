@@ -9,11 +9,22 @@ import type {
 	ProcessingConfig,
 	Rectangle,
 } from "../types";
-import { pointToCell, cellKey, samplePolyline, trimPolylineByDistance } from "../lib/projection";
-import { mergeToRectangles } from "../lib/grid";
+import { pointToCell } from "../lib/projection";
+import {
+	loadWasmModule,
+	samplePolylineSync,
+	trimPolylineByDistanceSync,
+	mergeVisitedToRectanglesSync,
+	visitedSetInsert,
+	visitedSetClear,
+	visitedSetSize,
+	visitedSetToStrings,
+	visitedSetFromStrings,
+} from "../lib/wasm-bridge";
 
 // Worker state
-let visitedCells = new Set<string>();
+// visitedCells now lives in the WASM heap as an unordered_set<int64_t>.
+// Use visitedSet* helpers from wasm-bridge for all operations.
 let processedActivityIds = new Set<number>();
 // Store processed activities so the worker can re-run processing when configs change (e.g., privacyDistance)
 let activityStore = new Map<number, StravaActivity>();
@@ -37,7 +48,7 @@ function processBatch(
 	config: ProcessingConfig,
 ): { cellsAdded: number; rectangles: Rectangle[] } {
 	let cellsAdded = 0;
-	const initialSize = visitedCells.size;
+	const initialSize = visitedSetSize();
 
 	for (const activity of activities) {
 		// Store activity for potential reprocessing later
@@ -69,16 +80,12 @@ function processBatch(
 			const filteredPoints = applyPrivacyFilter(points, config);
 
 			// Sample points along the polyline
-			const sampledPoints = samplePolyline(filteredPoints, config.samplingStep);
+			const sampledPoints = samplePolylineSync(filteredPoints, config.samplingStep);
 
-			// Mark cells
+			// Mark cells in WASM visited set — no string keys, no JS Set overhead
 			for (const point of sampledPoints) {
 				const cell = pointToCell(point.x, point.y, config.cellSize);
-				const key = cellKey(cell.x, cell.y);
-
-				if (!visitedCells.has(key)) {
-					visitedCells.add(key);
-				}
+				visitedSetInsert(cell.x, cell.y);
 			}
 
 			processedActivityIds.add(activity.id);
@@ -88,10 +95,10 @@ function processBatch(
 		}
 	}
 
-	cellsAdded = visitedCells.size - initialSize;
+	cellsAdded = visitedSetSize() - initialSize;
 
-	// Merge cells to rectangles for efficient rendering
-	const rectangles = mergeToRectangles(visitedCells);
+	// Merge cells to rectangles — reads directly from WASM set, no JS array copy
+	const rectangles = mergeVisitedToRectanglesSync();
 
 	return { cellsAdded, rectangles };
 }
@@ -104,22 +111,25 @@ function applyPrivacyFilter(
 	points: Array<[number, number]>,
 	config: ProcessingConfig,
 ): Array<[number, number]> {
-	return trimPolylineByDistance(points, config.privacyDistance);
+	return trimPolylineByDistanceSync(points, config.privacyDistance);
 }
 
 /* Haversine helper removed from worker; use shared utilities (trimPolylineByDistance/haversineDistance) from lib/projection instead. */
 
 /**
- * Initialize worker with existing state
+ * Initialize worker with existing state and load WASM module.
  */
-function initialize(data: {
+async function initialize(data: {
 	visitedCells?: string[];
 	processedActivityIds?: number[];
 	config?: ProcessingConfig;
 	activities?: StravaActivity[];
-}): void {
-	if (data.visitedCells) {
-		visitedCells = new Set(data.visitedCells);
+}): Promise<void> {
+	// Load WASM module eagerly so all sync calls are ready before processing begins
+	await loadWasmModule();
+
+	if (data.visitedCells && data.visitedCells.length > 0) {
+		visitedSetFromStrings(data.visitedCells);
 	}
 	if (data.processedActivityIds) {
 		processedActivityIds = new Set(data.processedActivityIds);
@@ -140,7 +150,7 @@ function initialize(data: {
 		progress: processedActivityIds.size,
 		total: processedActivityIds.size,
 		data: {
-			cellCount: visitedCells.size,
+			cellCount: visitedSetSize(),
 			initialized: true,
 			storedActivities: activityStore.size,
 		},
@@ -191,8 +201,8 @@ async function processActivities(data: {
 			data: {
 				rectangles,
 				cellsAdded,
-				totalCells: visitedCells.size,
-				visitedCells: Array.from(visitedCells),
+				totalCells: visitedSetSize(),
+				visitedCells: visitedSetToStrings(),
 				processedActivityIds: Array.from(processedActivityIds),
 			},
 		};
@@ -204,15 +214,15 @@ async function processActivities(data: {
 	}
 
 	// Send completion message
-	const rectangles = mergeToRectangles(visitedCells);
+	const rectangles = mergeVisitedToRectanglesSync();
 	const response: WorkerResponse = {
 		type: "complete",
 		progress: processedActivityIds.size,
 		total,
 		data: {
 			rectangles,
-			totalCells: visitedCells.size,
-			visitedCells: Array.from(visitedCells),
+			totalCells: visitedSetSize(),
+			visitedCells: visitedSetToStrings(),
 			processedActivityIds: Array.from(processedActivityIds),
 		},
 	};
@@ -237,7 +247,7 @@ async function reprocessAllActivities(batchSize: number = 20): Promise<void> {
 	isReprocessing = true;
 
 	// Clear existing cells and processed IDs so we rebuild from stored activities
-	visitedCells.clear();
+	visitedSetClear();
 	processedActivityIds.clear();
 
 	const allActivities = Array.from(activityStore.values());
@@ -257,8 +267,8 @@ async function reprocessAllActivities(batchSize: number = 20): Promise<void> {
 			data: {
 				rectangles,
 				cellsAdded,
-				totalCells: visitedCells.size,
-				visitedCells: Array.from(visitedCells),
+				totalCells: visitedSetSize(),
+				visitedCells: visitedSetToStrings(),
 				processedActivityIds: Array.from(processedActivityIds),
 				reprocessing: true,
 			},
@@ -271,15 +281,15 @@ async function reprocessAllActivities(batchSize: number = 20): Promise<void> {
 	}
 
 	// Finalize - send complete with rectangles
-	const rectangles = mergeToRectangles(visitedCells);
+	const rectangles = mergeVisitedToRectanglesSync();
 	const completeResponse: WorkerResponse = {
 		type: "complete",
 		progress: processedActivityIds.size,
 		total,
 		data: {
 			rectangles,
-			totalCells: visitedCells.size,
-			visitedCells: Array.from(visitedCells),
+			totalCells: visitedSetSize(),
+			visitedCells: visitedSetToStrings(),
 			processedActivityIds: Array.from(processedActivityIds),
 			reprocessed: true,
 		},
@@ -358,7 +368,7 @@ function updateConfig(config: Partial<ProcessingConfig> & { forceReprocess?: boo
  * Clear all state
  */
 function clear(): void {
-	visitedCells.clear();
+	visitedSetClear();
 	processedActivityIds.clear();
 	activityStore.clear();
 	isReprocessing = false;
@@ -382,7 +392,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 	try {
 		switch (type) {
 			case "init":
-				initialize(data);
+				await initialize(data);
 				break;
 
 			case "process":

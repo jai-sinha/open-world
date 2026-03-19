@@ -9,6 +9,7 @@ import { PMTiles } from "pmtiles";
 import { openDB, type IDBPDatabase, type DBSchema } from "idb";
 import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
 import { point } from "@turf/helpers";
+import { loadWasmModule } from "../lib/wasm-bridge";
 
 // IndexedDB schema for city boundary cache
 interface CityBoundaryDB extends DBSchema {
@@ -243,6 +244,8 @@ class CityProcessor {
 
 	constructor() {
 		this.worldLookup = new WorldLookup(`${this.tilesBaseUrl}/world-lookup.pmtiles`);
+		// Load WASM eagerly so stats.ts can use countVisitedFuzzySync on first message.
+		loadWasmModule().catch(console.error);
 	}
 
 	public handleMessage(event: MessageEvent<CityProcessorMessage>) {
