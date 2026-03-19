@@ -29,5 +29,5 @@
 		"incremental": true,
 	},
 	"include": ["src/**/*", "server/**/*", "build.ts"],
-	"exclude": ["node_modules", "dist", "**/*.test.ts"],
+	"exclude": ["node_modules", "dist", "**/*.test.ts", "src/wasm/build", "src/wasm/build-native"],
 }

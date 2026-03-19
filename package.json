@@ -22,7 +22,9 @@
 		"prod": "bun run server/server.ts --prod",
 		"preview": "bun run server/server.ts --prod",
 		"type-check": "tsc --noEmit",
-		"check": "bun run scripts/check-setup.ts"
+		"check": "bun run scripts/check-setup.ts",
+		"build:wasm": "mkdir -p public/wasm && emcmake cmake -S src/wasm -B src/wasm/build -DCMAKE_BUILD_TYPE=Release && emmake make -C src/wasm/build && cp src/wasm/build/core.js src/wasm/build/core.wasm public/wasm/",
+		"test:wasm": "cmake -S src/wasm -B src/wasm/build-native -DCMAKE_BUILD_TYPE=Debug && make -C src/wasm/build-native --silent && src/wasm/build-native/test_core --reporter compact"
 	},
 	"dependencies": {
 		"@mapbox/polyline": "^1.2.1",
