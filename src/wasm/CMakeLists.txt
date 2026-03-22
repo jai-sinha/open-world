@@ -15,9 +15,10 @@ if(EMSCRIPTEN)
     )
     target_link_options(core PRIVATE
         -sEXPORTED_FUNCTIONS=['_hello','_lat_lng_to_meters','_meters_to_lat_lng','_haversine_distance','_get_f64_out_buf','_get_i32_out_buf','_sample_polyline','_trim_polyline_by_distance','_point_to_cell','_merge_to_rectangles','_visited_set_insert','_visited_set_has','_visited_set_clear','_visited_set_size','_visited_set_to_array','_get_visited_dump_buf','_merge_visited_to_rectangles','_count_visited_fuzzy','_count_visited_fuzzy_vs_set','_malloc','_free']
-        -sEXPORTED_RUNTIME_METHODS=['cwrap']
+        -sEXPORTED_RUNTIME_METHODS=['cwrap','HEAPF64','HEAP32','HEAPU8']
         -sMODULARIZE=1
         -sEXPORT_NAME=OpenWorldCore
+        -sEXPORT_ES6=1
         -sENVIRONMENT=worker
         -O2
     )

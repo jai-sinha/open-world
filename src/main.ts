@@ -316,6 +316,9 @@ class ExplorationMapApp {
 			this.controls?.showMessage(`Processing ${newActivities.length} new activities...`, "info");
 			this.controls?.showProgress(true);
 
+			console.log(`Latest Activity: ${activities[0].name} on ${new Date(activities[0].start_date_local).toLocaleDateString()} at ${activities[0].start_latlng}`);
+			this.map?.jumpTo({ center: activities[0].start_latlng as [number, number], zoom: 12 });
+
 			this.sendWorkerMessage({
 				type: "process",
 				data: { activities: newActivities, batchSize: APP_CONFIG.processing.batchSize },

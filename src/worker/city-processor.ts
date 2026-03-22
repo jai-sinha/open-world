@@ -244,12 +244,13 @@ class CityProcessor {
 
 	constructor() {
 		this.worldLookup = new WorldLookup(`${this.tilesBaseUrl}/world-lookup.pmtiles`);
-		// Load WASM eagerly so stats.ts can use countVisitedFuzzySync on first message.
-		loadWasmModule().catch(console.error);
 	}
 
-	public handleMessage(event: MessageEvent<CityProcessorMessage>) {
+	public async handleMessage(event: MessageEvent<CityProcessorMessage>) {
 		const { type, payload } = event.data;
+
+		// Ensure WASM is ready before any stats call.
+		await loadWasmModule().catch(() => { /* falls back to TS impl in stats.ts */ });
 
 		switch (type) {
 			case "DISCOVER_CITIES":

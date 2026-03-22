@@ -356,7 +356,7 @@ Bun.serve({
 			// 3. SPA Fallback (serve index.html)
 			if (!exists) {
 				// If it looks like an asset request, return 404
-				if (path.match(/\.(js|css|map|svg|woff|woff2|png|jpg|jpeg|gif|ico|json)$/)) {
+				if (path.match(/\.(js|css|map|svg|woff|woff2|png|jpg|jpeg|gif|ico|json|wasm)$/)) {
 					return new Response("Not Found", { status: 404 });
 				}
 
@@ -376,6 +376,7 @@ Bun.serve({
 				const ext = filePath.split(".").pop() || "";
 				const mimes: Record<string, string> = {
 					js: "application/javascript; charset=utf-8",
+					wasm: "application/wasm",
 					css: "text/css; charset=utf-8",
 					map: "application/json",
 					svg: "image/svg+xml",

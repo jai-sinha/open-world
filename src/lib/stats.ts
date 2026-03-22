@@ -9,7 +9,11 @@ export function computeVisitedCountForCells(
 	visitedCells: Set<string>,
 ): number {
 	if (targetCells.size === 0) return 0;
-	if (isWasmLoaded()) return countVisitedFuzzySync(targetCells, visitedCells);
+	if (isWasmLoaded()) {
+		const result = countVisitedFuzzySync(targetCells, visitedCells);
+		if (result >= 0) return result;
+		// result === -1 means WASM function missing; fall through to TS below
+	}
 	let visited = 0;
 	for (const cell of targetCells) {
 		if (visitedCells.has(cell)) {

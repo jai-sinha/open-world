@@ -385,41 +385,45 @@ function clear(): void {
 	self.postMessage(response);
 }
 
-// Message handler
-self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
-	const { type, data } = event.data;
+// Message handler — serialised via a promise chain so that "process" always
+// waits for "init" (which awaits loadWasmModule) to complete first.
+let _messageQueue: Promise<void> = Promise.resolve();
 
-	try {
-		switch (type) {
-			case "init":
-				await initialize(data);
-				break;
+self.onmessage = (event: MessageEvent<WorkerMessage>) => {
+	_messageQueue = _messageQueue.then(async () => {
+		const { type, data } = event.data;
+		try {
+			switch (type) {
+				case "init":
+					await initialize(data);
+					break;
 
-			case "process":
-				await processActivities(data);
-				break;
+				case "process":
+					await processActivities(data);
+					break;
 
-			case "updateConfig":
-				updateConfig(data);
-				break;
+				case "updateConfig":
+					updateConfig(data);
+					break;
 
-			case "clear":
-				clear();
-				break;
+				case "clear":
+					clear();
+					break;
 
-			default:
-				console.warn("Unknown message type:", type);
+				default:
+					console.warn("Unknown message type:", type);
+			}
+		} catch (error) {
+			const response: WorkerResponse = {
+				type: "error",
+				data: {
+					message: error instanceof Error ? error.message : "Unknown error",
+					error,
+				},
+			};
+			self.postMessage(response);
 		}
-	} catch (error) {
-		const response: WorkerResponse = {
-			type: "error",
-			data: {
-				message: error instanceof Error ? error.message : "Unknown error",
-				error,
-			},
-		};
-		self.postMessage(response);
-	}
+	});
 };
 
 // Export empty object for TypeScript
