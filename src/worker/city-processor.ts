@@ -1,5 +1,5 @@
 import type { Feature, Polygon, MultiPolygon } from "geojson";
-import { metersToLatLng, packCell, unpackCell } from "../lib/projection";
+import { latLngToMeters, packCell, unpackCell } from "../lib/projection";
 import type { StravaActivity } from "../types";
 import { computeCityStats, computeVisitedPercentageForCells } from "../lib/stats";
 import { getRoadCellsForBbox } from "../lib/tiles";
@@ -7,6 +7,20 @@ import { WorldLookup } from "../lib/geocoding/world-lookup";
 import type { WorldLookupResult } from "../lib/geocoding/world-lookup";
 import { PMTiles } from "pmtiles";
 import { openDB, type IDBPDatabase, type DBSchema } from "idb";
+
+// Yield back to the event loop so pending network/IDB callbacks can fire.
+// Uses scheduler.yield() (Chrome 129+ in workers) with a setTimeout fallback.
+// Using (globalThis as any) to avoid TypeScript lib gaps in WebWorker context.
+const _schedulerYield: (() => Promise<void>) | null = (() => {
+	try {
+		const s = (globalThis as any).scheduler;
+		if (s && typeof s.yield === "function") return () => s.yield() as Promise<void>;
+	} catch {}
+	return null;
+})();
+const yieldToEventLoop: () => Promise<void> =
+	_schedulerYield ?? (() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+const YIELD_INTERVAL = 10_000; // yield every N cells in tight loops
 
 // IndexedDB schema for city boundary cache
 interface CityBoundaryDB extends DBSchema {
@@ -164,27 +178,80 @@ async function cacheBoundary(
 }
 
 // ── Inline point-in-polygon (replaces @turf/boolean-point-in-polygon) ────────
-// Pre-flatten a GeoJSON ring to a Float64Array [lng0, lat0, lng1, lat1, ...]
-function flattenRing(ring: number[][]): Float64Array {
-	const arr = new Float64Array(ring.length * 2);
-	for (let i = 0; i < ring.length; i++) {
-		arr[i * 2] = ring[i][0]; // lng
-		arr[i * 2 + 1] = ring[i][1]; // lat
+// Pre-flatten a GeoJSON ring to Web Mercator meters [mx0, my0, mx1, my1, ...]
+// Converting once here means the PIP hot loop never calls metersToLatLng.
+// Douglas-Peucker simplification on a Float64Array of interleaved [x,y,...] points.
+// Tolerance is in the same units as the coordinates (meters). Operates in-place on
+// an index array to avoid allocating new typed arrays for each recursive step.
+function dpSimplify(data: Float64Array, tolerance: number): Float64Array {
+	const n = data.length >> 1;
+	if (n <= 2) return data;
+	const tol2 = tolerance * tolerance;
+	// Use a stack-based iterative approach to avoid recursion depth limits.
+	const keep = new Uint8Array(n);
+	keep[0] = 1;
+	keep[n - 1] = 1;
+	const stack: [number, number][] = [[0, n - 1]];
+	while (stack.length > 0) {
+		const [start, end] = stack.pop()!;
+		if (end - start < 2) continue;
+		const x1 = data[start * 2], y1 = data[start * 2 + 1];
+		const x2 = data[end * 2],   y2 = data[end * 2 + 1];
+		const dx = x2 - x1, dy = y2 - y1;
+		const len2 = dx * dx + dy * dy;
+		let maxD2 = -1, maxIdx = start;
+		for (let i = start + 1; i < end; i++) {
+			const px = data[i * 2] - x1, py = data[i * 2 + 1] - y1;
+			const d2 = len2 === 0
+				? px * px + py * py
+				: (() => { const t = (px * dx + py * dy) / len2; const qx = px - t * dx, qy = py - t * dy; return qx * qx + qy * qy; })();
+			if (d2 > maxD2) { maxD2 = d2; maxIdx = i; }
+		}
+		if (maxD2 > tol2) {
+			keep[maxIdx] = 1;
+			stack.push([start, maxIdx], [maxIdx, end]);
+		}
 	}
-	return arr;
+	let count = 0;
+	for (let i = 0; i < n; i++) if (keep[i]) count++;
+	const out = new Float64Array(count * 2);
+	let o = 0;
+	for (let i = 0; i < n; i++) if (keep[i]) { out[o++] = data[i * 2]; out[o++] = data[i * 2 + 1]; }
+	return out;
 }
 
-// Standard ray-casting test on a pre-flattened ring
-function pointInFlatRing(ring: Float64Array, lng: number, lat: number): boolean {
-	const n = ring.length >> 1; // n = number of vertices
+// Convert a GeoJSON ring ([lng,lat][] pairs) to a FlatRing in Web Mercator meters,
+// simplified to `tolerance` metres (half a cell — preserves sub-cell correctness).
+function flattenRing(ring: number[][], tolerance: number): FlatRing {
+	const raw = new Float64Array(ring.length * 2);
+	for (let i = 0; i < ring.length; i++) {
+		const { x, y } = latLngToMeters(ring[i][1], ring[i][0]);
+		raw[i * 2] = x;
+		raw[i * 2 + 1] = y;
+	}
+	const data = dpSimplify(raw, tolerance);
+	const n = data.length >> 1;
+	let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+	for (let i = 0; i < n; i++) {
+		const x = data[i * 2], y = data[i * 2 + 1];
+		if (x < minX) minX = x; if (x > maxX) maxX = x;
+		if (y < minY) minY = y; if (y > maxY) maxY = y;
+	}
+	return { data, minX, maxX, minY, maxY };
+}
+
+// Standard ray-casting test on a FlatRing. Bbox is checked by caller.
+function pointInFlatRing(ring: FlatRing, x: number, y: number): boolean {
+	const { data } = ring;
+	const n = data.length >> 1;
 	let inside = false;
 	let j = n - 1;
 	for (let i = 0; i < n; i++) {
-		const xi = ring[i * 2];
-		const yi = ring[i * 2 + 1];
-		const xj = ring[j * 2];
-		const yj = ring[j * 2 + 1];
-		if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+		const xi = data[i * 2];
+		const yi = data[i * 2 + 1];
+		const xj = data[j * 2];
+		const yj = data[j * 2 + 1];
+		if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
 			inside = !inside;
 		}
 		j = i;
@@ -192,15 +259,18 @@ function pointInFlatRing(ring: Float64Array, lng: number, lat: number): boolean 
 	return inside;
 }
 
-// Check against pre-flattened polygon rings.
-// outerRings: first ring of each sub-polygon; holesPerPoly: subsequent rings (holes).
-function pointInFlatPolygon(outerRings: Float64Array[], holesPerPoly: Float64Array[][], lng: number, lat: number): boolean {
+// Check against pre-flattened polygon rings with bbox short-circuit.
+function pointInFlatPolygon(outerRings: FlatRing[], holesPerPoly: FlatRing[][], x: number, y: number): boolean {
 	for (let p = 0; p < outerRings.length; p++) {
-		if (!pointInFlatRing(outerRings[p], lng, lat)) continue;
+		const outer = outerRings[p];
+		// Cheap bbox rejection before expensive ray-cast.
+		if (x < outer.minX || x > outer.maxX || y < outer.minY || y > outer.maxY) continue;
+		if (!pointInFlatRing(outer, x, y)) continue;
 		const holes = holesPerPoly[p];
 		let inHole = false;
 		for (const hole of holes) {
-			if (pointInFlatRing(hole, lng, lat)) { inHole = true; break; }
+			if (x < hole.minX || x > hole.maxX || y < hole.minY || y > hole.maxY) continue;
+			if (pointInFlatRing(hole, x, y)) { inHole = true; break; }
 		}
 		if (!inHole) return true;
 	}
@@ -208,17 +278,18 @@ function pointInFlatPolygon(outerRings: Float64Array[], holesPerPoly: Float64Arr
 }
 
 // Pre-flatten a city boundary feature. Returns [outerRings, holesPerPoly].
-function flattenBoundary(feature: Feature<Polygon | MultiPolygon>): [Float64Array[], Float64Array[][]] {
-	const outerRings: Float64Array[] = [];
-	const holesPerPoly: Float64Array[][] = [];
+// tolerance: simplification in meters — half a cell preserves sub-cell correctness.
+function flattenBoundary(feature: Feature<Polygon | MultiPolygon>, tolerance: number): [FlatRing[], FlatRing[][]] {
+	const outerRings: FlatRing[] = [];
+	const holesPerPoly: FlatRing[][] = [];
 	if (feature.geometry.type === "Polygon") {
 		const rings = feature.geometry.coordinates;
-		outerRings.push(flattenRing(rings[0]));
-		holesPerPoly.push(rings.slice(1).map(flattenRing));
+		outerRings.push(flattenRing(rings[0], tolerance));
+		holesPerPoly.push(rings.slice(1).map((r) => flattenRing(r, tolerance)));
 	} else {
 		for (const poly of feature.geometry.coordinates) {
-			outerRings.push(flattenRing(poly[0]));
-			holesPerPoly.push(poly.slice(1).map(flattenRing));
+			outerRings.push(flattenRing(poly[0], tolerance));
+			holesPerPoly.push(poly.slice(1).map((r) => flattenRing(r, tolerance)));
 		}
 	}
 	return [outerRings, holesPerPoly];
@@ -234,8 +305,8 @@ export interface City {
 	name: string;
 	displayName: string;
 	boundary: Feature<Polygon | MultiPolygon>;
-	flatOuter: Float64Array[];   // pre-flattened outer rings for fast PIP
-	flatHoles: Float64Array[][]; // pre-flattened holes per polygon
+	flatOuter: FlatRing[];   // pre-flattened outer rings for fast PIP
+	flatHoles: FlatRing[][]; // pre-flattened holes per polygon
 	roadCells: Set<number> | null; // Road-only cells (async computed)
 	roadTiles: string; // PMTiles filename for road data, e.g. "europe.pmtiles"
 	source: "self-hosted";
@@ -617,7 +688,8 @@ class CityProcessor {
 				center = { lat: fallbackLat, lng: fallbackLng };
 			}
 
-			const [flatOuter, flatHoles] = flattenBoundary(feature);
+			// tolerance = cellSize/2 — simplifies polygon to sub-cell precision
+			const [flatOuter, flatHoles] = flattenBoundary(feature, this.cellSize / 2);
 
 			const city: City = {
 				id: lookupResult.osmId,
@@ -708,22 +780,31 @@ class CityProcessor {
 				`[RoadCells] ${city.name}: fetched ${roadCells.size} raw road cells in ${((fetchTime - startTime) / 1000).toFixed(1)}s`,
 			);
 
-			// Filter road cells using inline ray-cast on pre-flattened rings
+			// Filter road cells using inline ray-cast on pre-flattened meter-space rings.
+			// centerX/centerY are already in Web Mercator meters — no coordinate conversion needed.
+			// Yield every YIELD_INTERVAL iterations so network/IDB callbacks can fire while
+			// this synchronous loop runs (otherwise the worker event loop is fully blocked).
 			const filteredRoadCells = new Set<number>();
+			let pipCount = 0;
 			for (const v of roadCells) {
 				const { x, y } = unpackCell(v);
 				const centerX = x * this.cellSize + this.cellSize / 2;
 				const centerY = y * this.cellSize + this.cellSize / 2;
-				const { lat, lng } = metersToLatLng(centerX, centerY);
-				if (pointInFlatPolygon(city.flatOuter, city.flatHoles, lng, lat)) {
+				if (pointInFlatPolygon(city.flatOuter, city.flatHoles, centerX, centerY)) {
 					filteredRoadCells.add(v);
 				}
+				if (++pipCount % YIELD_INTERVAL === 0) await yieldToEventLoop();
 			}
+
+			const pipTime = performance.now();
+			console.debug(
+				`[RoadCells] ${city.name}: PIP filter ${roadCells.size}→${filteredRoadCells.size} cells in ${((pipTime - fetchTime) / 1000).toFixed(2)}s`,
+			);
 
 			city.roadCells = filteredRoadCells;
 
-			// Cache the computed road cells
-			await cacheRoadCells(city.osmId, filteredRoadCells, this.cellSize);
+			// Cache the computed road cells — fire-and-forget, don't block city completion.
+			cacheRoadCells(city.osmId, filteredRoadCells, this.cellSize).catch(console.warn);
 
 			const totalTime = performance.now();
 			console.debug(

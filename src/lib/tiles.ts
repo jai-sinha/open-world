@@ -8,6 +8,20 @@ import { VectorTile } from "@mapbox/vector-tile";
 let PMTILES_URL = "";
 let globalPmtiles: PMTiles | null = null;
 
+// Yield back to the event loop so pending network/IDB callbacks can fire.
+// Uses scheduler.yield() (Chrome 129+ in workers) with a setTimeout fallback.
+// Using (globalThis as any) to avoid TypeScript lib gaps in WebWorker context.
+const _schedulerYield: (() => Promise<void>) | null = (() => {
+	try {
+		const s = (globalThis as any).scheduler;
+		if (s && typeof s.yield === "function") return () => s.yield() as Promise<void>;
+	} catch {}
+	return null;
+})();
+const yieldToEventLoop: () => Promise<void> =
+	_schedulerYield ?? (() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+const YIELD_INTERVAL = 10_000; // yield every N cells in tight loops
+
 export function setRoadPMTilesURL(url: string) {
 	if (PMTILES_URL === url) return;
 	PMTILES_URL = url;
@@ -93,7 +107,12 @@ async function getCachedTileCells(
 		const db = await getDb();
 		const rec = await db.get("roadTileCells", tileKey(z, x, y, cellSize));
 		if (rec) {
-			updateTimestamp(rec.key, rec.cells).catch(console.warn);
+			// Only refresh LRU timestamp if record is more than 1 hour old —
+			// avoids an IDB write on every cache hit during a bulk city computation.
+			const now = Date.now();
+			if (now - rec.timestamp > 3_600_000) {
+				updateTimestamp(rec.key, rec.cells).catch(console.warn);
+			}
 			const cells = new Set<number>();
 			for (let i = 0; i < rec.cells.length; i += 2) {
 				cells.add(packCell(rec.cells[i], rec.cells[i + 1]));
@@ -119,8 +138,11 @@ async function updateTimestamp(key: string, cells: Int32Array) {
 	}
 }
 
-// Keep cache size under control (e.g. 500 tiles ~ 20-50MB depending on density)
-const MAX_CACHE_SIZE = 500;
+// Keep cache size under control. 5000 tiles ≈ 200–500 MB depending on density.
+// The old 500-tile limit was hit quickly across concurrent cities, triggering the
+// slow cursor-based prune (a long-held readwrite lock) that blocked all concurrent
+// cache writes for 5–10 seconds.
+const MAX_CACHE_SIZE = 5000;
 let pruneInProgress = false;
 
 async function pruneCache() {
@@ -129,20 +151,27 @@ async function pruneCache() {
 	try {
 		const db = await getDb();
 		const count = await db.count("roadTileCells");
-		if (count > MAX_CACHE_SIZE) {
-			const deleteCount = count - MAX_CACHE_SIZE;
-			// Delete oldest entries
-			let deleted = 0;
-			let cursor = await db
-				.transaction("roadTileCells", "readwrite")
-				.store.index("timestamp")
-				.openCursor();
+		if (count <= MAX_CACHE_SIZE) return;
 
-			while (cursor && deleted < deleteCount) {
-				await cursor.delete();
-				deleted++;
-				cursor = await cursor.continue();
-			}
+		const deleteCount = count - MAX_CACHE_SIZE;
+		// Read the oldest keys via the timestamp index (readonly — no lock contention).
+		const tx = db.transaction("roadTileCells", "readonly");
+		let collected = 0;
+		const keysToDelete: string[] = [];
+		let cursor = await tx.store.index("timestamp").openCursor();
+		while (cursor && collected < deleteCount) {
+			keysToDelete.push(cursor.primaryKey as string);
+			collected++;
+			cursor = await cursor.continue();
+		}
+		await tx.done;
+
+		// Delete in a single readwrite transaction with parallel delete calls.
+		// Parallel deletes inside one transaction are faster than sequential cursor steps.
+		if (keysToDelete.length > 0) {
+			const writeTx = db.transaction("roadTileCells", "readwrite");
+			await Promise.all(keysToDelete.map((k) => writeTx.store.delete(k)));
+			await writeTx.done;
 		}
 	} catch (e) {
 		console.warn("Cache pruning failed:", e);
@@ -200,15 +229,16 @@ async function fetchTileBytes(
 	}
 }
 
-// Rasterize a line segment into grid cells (reused from viewport logic)
-function rasterizeLineToRoadCells(
+// Rasterize a line segment into grid cells, writing directly into `out`.
+// Avoids allocating a temporary Set per segment.
+function rasterizeSegmentInto(
 	lng1: number,
 	lat1: number,
 	lng2: number,
 	lat2: number,
 	cellSize: number,
-): Set<number> {
-	const cells = new Set<number>();
+	out: Set<number>,
+): void {
 	const p1 = latLngToMeters(lat1, lng1);
 	const p2 = latLngToMeters(lat2, lng2);
 	const dx = p2.x - p1.x;
@@ -220,9 +250,8 @@ function rasterizeLineToRoadCells(
 		const x = p1.x + dx * t;
 		const y = p1.y + dy * t;
 		const cell = pointToCell(x, y, cellSize);
-		cells.add(packCell(cell.x, cell.y));
+		out.add(packCell(cell.x, cell.y));
 	}
-	return cells;
 }
 
 export async function getRoadCellsForBbox(
@@ -270,9 +299,7 @@ export async function getRoadCellsForBbox(
 							for (let i = 0; i < coords.length - 1; i++) {
 								const [lng1, lat1] = coords[i];
 								const [lng2, lat2] = coords[i + 1];
-								rasterizeLineToRoadCells(lng1, lat1, lng2, lat2, cellSize).forEach((c) =>
-									cells.add(c),
-								);
+								rasterizeSegmentInto(lng1, lat1, lng2, lat2, cellSize, cells);
 							}
 						} else if (gj.geometry.type === "MultiLineString") {
 							const lines = gj.geometry.coordinates as [number, number][][];
@@ -280,9 +307,7 @@ export async function getRoadCellsForBbox(
 								for (let i = 0; i < line.length - 1; i++) {
 									const [lng1, lat1] = line[i];
 									const [lng2, lat2] = line[i + 1];
-									rasterizeLineToRoadCells(lng1, lat1, lng2, lat2, cellSize).forEach((c) =>
-										cells.add(c),
-									);
+									rasterizeSegmentInto(lng1, lat1, lng2, lat2, cellSize, cells);
 								}
 							}
 						}
@@ -305,8 +330,6 @@ export async function getRoadCellsForBbox(
 		.fill(null)
 		.map(async () => {
 			while (queue.length > 0) {
-				// Yield to main thread to improve INP
-				await new Promise((resolve) => setTimeout(resolve, 0));
 				const tile = queue.shift();
 				if (tile) await processTile(tile.z, tile.x, tile.y);
 			}
@@ -322,11 +345,13 @@ export async function getRoadCellsForBbox(
 	const minY = Math.min(sw.y, ne.y);
 	const maxY = Math.max(sw.y, ne.y);
 	const filtered = new Set<number>();
+	let bboxCount = 0;
 	for (const v of union) {
 		const { x: sx, y: sy } = unpackCell(v);
 		const cx = sx * cellSize + cellSize / 2;
 		const cy = sy * cellSize + cellSize / 2;
 		if (cx >= minX && cx <= maxX && cy >= minY && cy <= maxY) filtered.add(v);
+		if (++bboxCount % YIELD_INTERVAL === 0) await yieldToEventLoop();
 	}
 	return filtered;
 }
