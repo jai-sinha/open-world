@@ -320,6 +320,11 @@ class ExplorationMapApp {
 				type: "process",
 				data: { activities: newActivities, batchSize: APP_CONFIG.processing.batchSize },
 			});
+
+			console.log("Latest activity:", activities[0].name, new Date(activities[0].start_date_local).toLocaleString(), "at", activities[0].start_latlng);
+			const [lat, long] = activities[0].start_latlng as [number, number];
+			this.map?.jumpTo({ center: [long, lat], zoom: 12 });
+
 		} catch (error) {
 			console.error("Fetch error:", error);
 			this.controls?.showMessage("Failed to fetch activities", "error");

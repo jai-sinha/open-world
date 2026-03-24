@@ -309,7 +309,7 @@ class CityProcessor {
 	// Road cell computation queue + concurrency pool
 	private roadCellQueue: City[] = [];
 	private activeCityCount = 0;
-	private readonly MAX_CONCURRENT_CITIES = 3;
+	private readonly MAX_CONCURRENT_CITIES = 5;
 
 	// PMTiles Instance Cache (keyed by full URL)
 	private pmtilesCache = new Map<string, PMTiles>();

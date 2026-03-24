@@ -1,56 +1,68 @@
 // Grid processing utilities for marking visited cells and merging to rectangles
 // This is the core algorithm for efficient exploration visualization
 
-import type { GridCell, Rectangle } from "../types";
-import { packCell, unpackCell, getCellBounds } from "./projection";
+import type { Rectangle } from "../types";
+import { packCell, getCellBounds, CELL_OFFSET, CELL_MULTIPLIER } from "./projection";
 
 /**
- * Merge contiguous cells into rectangles for efficient rendering
- * Uses row-scan algorithm with optional vertical merging
+ * Merge contiguous cells into rectangles for efficient rendering.
+ * Uses a Float64Array sort (y-primary, x-secondary) to avoid per-cell object
+ * allocation from the old Array.from(cells).map(unpackCell) approach.
  */
 export function mergeToRectangles(cells: Set<number>): Rectangle[] {
 	if (cells.size === 0) return [];
 
-	// Convert to sorted array of cell coordinates
-	const cellCoords: GridCell[] = Array.from(cells).map(unpackCell);
-
-	// Sort by y, then x for row-scan
-	cellCoords.sort((a, b) => a.y - b.y || a.x - b.x);
+	// Build a Float64Array with y-first packed values so a plain numeric sort
+	// gives the y-primary, x-secondary order the row-scan needs.
+	// y-first pack: (y + OFFSET) * MULT + (x + OFFSET)
+	const sortArr = new Float64Array(cells.size);
+	let i = 0;
+	for (const v of cells) {
+		const xOff = Math.floor(v / CELL_MULTIPLIER); // (x + OFFSET)
+		const yOff = v - xOff * CELL_MULTIPLIER;       // (y + OFFSET)
+		sortArr[i++] = yOff * CELL_MULTIPLIER + xOff;
+	}
+	sortArr.sort(); // numeric ascending → y-primary, x-secondary
 
 	const rectangles: Rectangle[] = [];
 	const processed = new Set<number>();
 
-	for (const cell of cellCoords) {
-		const key = packCell(cell.x, cell.y);
+	for (let j = 0; j < sortArr.length; j++) {
+		const sv = sortArr[j];
+		// Unpack y-first encoding inline (no object allocation)
+		const xOff = sv % CELL_MULTIPLIER;
+		const yOff = (sv - xOff) / CELL_MULTIPLIER;
+		const x = xOff - CELL_OFFSET;
+		const y = yOff - CELL_OFFSET;
+
+		const key = packCell(x, y);
 		if (processed.has(key)) continue;
 
-		// Find the extent of the rectangle starting at this cell
-		const rect = growRectangle(cell, cells, processed);
-		if (rect) {
-			rectangles.push(rect);
-		}
+		const rect = growRectangle(x, y, cells, processed);
+		if (rect) rectangles.push(rect);
 	}
 
-	// Optional: merge vertically adjacent rectangles with same x-extent
 	return mergeVerticalRectangles(rectangles);
 }
 
 /**
- * Grow a rectangle from a starting cell by scanning right and down
+ * Grow a rectangle from a starting cell by scanning right and down.
+ * Takes x,y directly to avoid GridCell object allocation.
  */
 function growRectangle(
-	start: GridCell,
+	startX: number,
+	startY: number,
 	cells: Set<number>,
 	processed: Set<number>,
 ): Rectangle | null {
-	const startKey = packCell(start.x, start.y);
+	const startKey = packCell(startX, startY);
 	if (!cells.has(startKey) || processed.has(startKey)) {
 		return null;
 	}
 
 	// Find the width by scanning right
 	let width = 1;
-	while (cells.has(packCell(start.x + width, start.y))) {
+	while (cells.has(packCell(startX + width, startY))) {
 		width++;
 	}
 
@@ -59,30 +71,27 @@ function growRectangle(
 	let canGrowDown = true;
 
 	while (canGrowDown) {
-		// Check if the next row has all required cells
 		for (let dx = 0; dx < width; dx++) {
-			if (!cells.has(packCell(start.x + dx, start.y + height))) {
+			if (!cells.has(packCell(startX + dx, startY + height))) {
 				canGrowDown = false;
 				break;
 			}
 		}
-		if (canGrowDown) {
-			height++;
-		}
+		if (canGrowDown) height++;
 	}
 
 	// Mark all cells in this rectangle as processed
 	for (let dy = 0; dy < height; dy++) {
 		for (let dx = 0; dx < width; dx++) {
-			processed.add(packCell(start.x + dx, start.y + dy));
+			processed.add(packCell(startX + dx, startY + dy));
 		}
 	}
 
 	return {
-		minX: start.x,
-		minY: start.y,
-		maxX: start.x + width - 1,
-		maxY: start.y + height - 1,
+		minX: startX,
+		minY: startY,
+		maxX: startX + width - 1,
+		maxY: startY + height - 1,
 	};
 }
 

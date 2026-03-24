@@ -150,7 +150,7 @@ export async function getStorageStats(): Promise<{
 
 		// Rough estimate of storage size in bytes
 		const estimatedSize =
-			state.visitedCells.length * 20 + // ~20 bytes per cell key
+			state.visitedCells.length * 8 + // 8 bytes per packed integer cell
 			state.processedActivityIds.length * 8 + // 8 bytes per ID
 			200; // overhead
 
