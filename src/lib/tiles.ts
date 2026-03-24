@@ -1,4 +1,4 @@
-import { latLngToMeters, pointToCell, cellKey } from "./projection";
+import { latLngToMeters, pointToCell, packCell, unpackCell } from "./projection";
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import { PMTiles } from "pmtiles";
 import Pbf from "pbf";
@@ -20,7 +20,7 @@ interface RoadCellsDB extends DBSchema {
 		key: string; // `${z}/${x}/${y}/${cellSize}`
 		value: {
 			key: string;
-			cells: string[];
+			cells: Int32Array; // interleaved x,y pairs of packed integer cells
 			timestamp: number;
 		};
 		indexes: {
@@ -32,18 +32,14 @@ interface RoadCellsDB extends DBSchema {
 let db: IDBPDatabase<RoadCellsDB> | null = null;
 async function getDb(): Promise<IDBPDatabase<RoadCellsDB>> {
 	if (db) return db;
-	db = await openDB<RoadCellsDB>("open-world", 3, {
+	db = await openDB<RoadCellsDB>("open-world", 4, {
 		upgrade(db, _oldVersion, _newVersion, transaction) {
-			// Create store if it doesn't exist
-			if (!db.objectStoreNames.contains("roadTileCells")) {
+			// Wipe on any upgrade — cells format changed to Int32Array
+			if (db.objectStoreNames.contains("roadTileCells")) {
+				transaction.objectStore("roadTileCells").clear();
+			} else {
 				const store = db.createObjectStore("roadTileCells", { keyPath: "key" });
 				store.createIndex("timestamp", "timestamp");
-			} else {
-				// If store exists but index doesn't (migration from v2)
-				const store = transaction.objectStore("roadTileCells");
-				if (!store.indexNames.contains("timestamp")) {
-					store.createIndex("timestamp", "timestamp");
-				}
 			}
 		},
 	});
@@ -92,15 +88,17 @@ async function getCachedTileCells(
 	x: number,
 	y: number,
 	cellSize: number,
-): Promise<Set<string> | null> {
+): Promise<Set<number> | null> {
 	try {
 		const db = await getDb();
 		const rec = await db.get("roadTileCells", tileKey(z, x, y, cellSize));
 		if (rec) {
-			// Update timestamp for LRU
-			// We do this asynchronously and don't await it to avoid blocking reads
 			updateTimestamp(rec.key, rec.cells).catch(console.warn);
-			return new Set(rec.cells);
+			const cells = new Set<number>();
+			for (let i = 0; i < rec.cells.length; i += 2) {
+				cells.add(packCell(rec.cells[i], rec.cells[i + 1]));
+			}
+			return cells;
 		}
 	} catch (e) {
 		console.warn("Failed to read tile cells from cache:", e);
@@ -108,7 +106,7 @@ async function getCachedTileCells(
 	return null;
 }
 
-async function updateTimestamp(key: string, cells: string[]) {
+async function updateTimestamp(key: string, cells: Int32Array) {
 	try {
 		const db = await getDb();
 		await db.put("roadTileCells", {
@@ -158,16 +156,22 @@ async function cacheTileCells(
 	x: number,
 	y: number,
 	cellSize: number,
-	cells: Set<string>,
+	cells: Set<number>,
 ): Promise<void> {
 	try {
 		const db = await getDb();
+		const arr = new Int32Array(cells.size * 2);
+		let i = 0;
+		for (const v of cells) {
+			const { x: cx, y: cy } = unpackCell(v);
+			arr[i++] = cx;
+			arr[i++] = cy;
+		}
 		await db.put("roadTileCells", {
 			key: tileKey(z, x, y, cellSize),
-			cells: Array.from(cells),
+			cells: arr,
 			timestamp: Date.now(),
 		});
-		// Trigger prune always after adding
 		pruneCache().catch(console.warn);
 	} catch (e) {
 		console.warn("Failed to cache tile cells:", e);
@@ -203,8 +207,8 @@ function rasterizeLineToRoadCells(
 	lng2: number,
 	lat2: number,
 	cellSize: number,
-): Set<string> {
-	const cells = new Set<string>();
+): Set<number> {
+	const cells = new Set<number>();
 	const p1 = latLngToMeters(lat1, lng1);
 	const p2 = latLngToMeters(lat2, lng2);
 	const dx = p2.x - p1.x;
@@ -216,7 +220,7 @@ function rasterizeLineToRoadCells(
 		const x = p1.x + dx * t;
 		const y = p1.y + dy * t;
 		const cell = pointToCell(x, y, cellSize);
-		cells.add(cellKey(cell.x, cell.y));
+		cells.add(packCell(cell.x, cell.y));
 	}
 	return cells;
 }
@@ -230,7 +234,7 @@ export async function getRoadCellsForBbox(
 	zoom = 14,
 	useCache = true,
 	pmtilesInstance?: PMTiles | null,
-): Promise<Set<string>> {
+): Promise<Set<number>> {
 	// If no instance provided and no global set, we can't do anything.
 	if (!pmtilesInstance && !globalPmtiles) {
 		console.warn("PMTiles not configured; call setRoadPMTilesURL() or pass instance");
@@ -239,7 +243,7 @@ export async function getRoadCellsForBbox(
 
 	// Assemble from tile-level caches, then filter to bbox
 	const tiles = coverTilesForBbox(minLat, maxLat, minLng, maxLng, zoom);
-	const union = new Set<string>();
+	const union = new Set<number>();
 
 	// Process tiles in parallel with concurrency limit
 	const CONCURRENCY = 24;
@@ -255,7 +259,7 @@ export async function getRoadCellsForBbox(
 				const vt = new VectorTile(new Pbf(new Uint8Array(bytes)));
 				const layerNames = Object.keys(vt.layers || {});
 				const roadLike = layerNames.find((n) => /road|transportation/i.test(n));
-				const cells = new Set<string>();
+				const cells = new Set<number>();
 				if (roadLike) {
 					const layer = vt.layers[roadLike];
 					for (let i = 0; i < layer.length; i++) {
@@ -317,12 +321,12 @@ export async function getRoadCellsForBbox(
 	const maxX = Math.max(sw.x, ne.x);
 	const minY = Math.min(sw.y, ne.y);
 	const maxY = Math.max(sw.y, ne.y);
-	const filtered = new Set<string>();
-	for (const key of union) {
-		const [sx, sy] = key.split(",").map(Number);
+	const filtered = new Set<number>();
+	for (const v of union) {
+		const { x: sx, y: sy } = unpackCell(v);
 		const cx = sx * cellSize + cellSize / 2;
 		const cy = sy * cellSize + cellSize / 2;
-		if (cx >= minX && cx <= maxX && cy >= minY && cy <= maxY) filtered.add(key);
+		if (cx >= minX && cx <= maxX && cy >= minY && cy <= maxY) filtered.add(v);
 	}
 	return filtered;
 }

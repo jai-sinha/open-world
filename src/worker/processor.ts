@@ -9,11 +9,11 @@ import type {
 	ProcessingConfig,
 	Rectangle,
 } from "../types";
-import { pointToCell, cellKey, samplePolyline, trimPolylineByDistance } from "../lib/projection";
+import { pointToCell, packCell, samplePolyline, trimPolylineByDistance } from "../lib/projection";
 import { mergeToRectangles } from "../lib/grid";
 
 // Worker state
-let visitedCells = new Set<string>();
+let visitedCells = new Set<number>();
 let processedActivityIds = new Set<number>();
 // Store processed activities so the worker can re-run processing when configs change (e.g., privacyDistance)
 let activityStore = new Map<number, StravaActivity>();
@@ -74,11 +74,7 @@ function processBatch(
 			// Mark cells
 			for (const point of sampledPoints) {
 				const cell = pointToCell(point.x, point.y, config.cellSize);
-				const key = cellKey(cell.x, cell.y);
-
-				if (!visitedCells.has(key)) {
-					visitedCells.add(key);
-				}
+				visitedCells.add(packCell(cell.x, cell.y));
 			}
 
 			processedActivityIds.add(activity.id);
@@ -113,13 +109,13 @@ function applyPrivacyFilter(
  * Initialize worker with existing state
  */
 function initialize(data: {
-	visitedCells?: string[];
+	visitedCells?: number[];
 	processedActivityIds?: number[];
 	config?: ProcessingConfig;
 	activities?: StravaActivity[];
 }): void {
 	if (data.visitedCells) {
-		visitedCells = new Set(data.visitedCells);
+		visitedCells = new Set<number>(data.visitedCells);
 	}
 	if (data.processedActivityIds) {
 		processedActivityIds = new Set(data.processedActivityIds);

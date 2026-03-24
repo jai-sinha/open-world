@@ -49,7 +49,7 @@ class ExplorationMapApp {
 	private tilesBaseUrl?: string;
 
 	// State
-	private visitedCells = new Set<string>();
+	private visitedCells = new Set<number>();
 	private processedActivityIds = new Set<number>();
 	private currentConfig: ProcessingConfig = APP_CONFIG.processing;
 	private allActivities: StravaActivity[] = [];
@@ -386,7 +386,7 @@ class ExplorationMapApp {
 
 	private updateMapAndState(data: any): void {
 		if (data.visitedCells) {
-			this.visitedCells = new Set(data.visitedCells);
+			this.visitedCells = new Set<number>(data.visitedCells);
 			this.cityManager?.updateVisitedCells(this.visitedCells);
 			if (this.cityManager) {
 				this.controls?.updateCityStats(this.cityManager.getStats());

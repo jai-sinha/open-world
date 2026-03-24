@@ -2,26 +2,26 @@
 // This is the core algorithm for efficient exploration visualization
 
 import type { GridCell, Rectangle } from "../types";
-import { cellKey, parseCellKey, getCellBounds } from "./projection";
+import { packCell, unpackCell, getCellBounds } from "./projection";
 
 /**
  * Merge contiguous cells into rectangles for efficient rendering
  * Uses row-scan algorithm with optional vertical merging
  */
-export function mergeToRectangles(cells: Set<string>): Rectangle[] {
+export function mergeToRectangles(cells: Set<number>): Rectangle[] {
 	if (cells.size === 0) return [];
 
 	// Convert to sorted array of cell coordinates
-	const cellCoords: GridCell[] = Array.from(cells).map(parseCellKey);
+	const cellCoords: GridCell[] = Array.from(cells).map(unpackCell);
 
 	// Sort by y, then x for row-scan
 	cellCoords.sort((a, b) => a.y - b.y || a.x - b.x);
 
 	const rectangles: Rectangle[] = [];
-	const processed = new Set<string>();
+	const processed = new Set<number>();
 
 	for (const cell of cellCoords) {
-		const key = cellKey(cell.x, cell.y);
+		const key = packCell(cell.x, cell.y);
 		if (processed.has(key)) continue;
 
 		// Find the extent of the rectangle starting at this cell
@@ -40,17 +40,17 @@ export function mergeToRectangles(cells: Set<string>): Rectangle[] {
  */
 function growRectangle(
 	start: GridCell,
-	cells: Set<string>,
-	processed: Set<string>,
+	cells: Set<number>,
+	processed: Set<number>,
 ): Rectangle | null {
-	const startKey = cellKey(start.x, start.y);
+	const startKey = packCell(start.x, start.y);
 	if (!cells.has(startKey) || processed.has(startKey)) {
 		return null;
 	}
 
 	// Find the width by scanning right
 	let width = 1;
-	while (cells.has(cellKey(start.x + width, start.y))) {
+	while (cells.has(packCell(start.x + width, start.y))) {
 		width++;
 	}
 
@@ -61,7 +61,7 @@ function growRectangle(
 	while (canGrowDown) {
 		// Check if the next row has all required cells
 		for (let dx = 0; dx < width; dx++) {
-			if (!cells.has(cellKey(start.x + dx, start.y + height))) {
+			if (!cells.has(packCell(start.x + dx, start.y + height))) {
 				canGrowDown = false;
 				break;
 			}
@@ -74,7 +74,7 @@ function growRectangle(
 	// Mark all cells in this rectangle as processed
 	for (let dy = 0; dy < height; dy++) {
 		for (let dx = 0; dx < width; dx++) {
-			processed.add(cellKey(start.x + dx, start.y + dy));
+			processed.add(packCell(start.x + dx, start.y + dy));
 		}
 	}
 
@@ -138,11 +138,11 @@ export function isPointInRectangles(x: number, y: number, rectangles: Rectangle[
 /**
  * Get all cells touched by a rectangle
  */
-export function rectangleToCells(rect: Rectangle): Set<string> {
-	const cells = new Set<string>();
+export function rectangleToCells(rect: Rectangle): Set<number> {
+	const cells = new Set<number>();
 	for (let y = rect.minY; y <= rect.maxY; y++) {
 		for (let x = rect.minX; x <= rect.maxX; x++) {
-			cells.add(cellKey(x, y));
+			cells.add(packCell(x, y));
 		}
 	}
 	return cells;
@@ -159,7 +159,7 @@ export interface GridStats {
 	bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
 }
 
-export function computeGridStats(cells: Set<string>, rectangles: Rectangle[]): GridStats {
+export function computeGridStats(cells: Set<number>, rectangles: Rectangle[]): GridStats {
 	const bounds = getCellBounds(cells);
 
 	return {

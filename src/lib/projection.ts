@@ -48,20 +48,34 @@ export function cellToPoint(
 	};
 }
 
-/**
- * Calculate cell key for Set/Map storage
- */
-export function cellKey(cellX: number, cellY: number): string {
-	return `${cellX},${cellY}`;
+// ── Integer cell packing ──────────────────────────────────────────────────────
+// Each cell (x, y) is encoded as a single JS safe-integer number.
+// CELL_OFFSET shifts coordinates to non-negative; CELL_MULTIPLIER separates x/y.
+// Works globally at any cellSize ≥ 1 (max |coord| at cellSize=1 is ~20 M < 2^25).
+export const CELL_OFFSET = 33554432; // 2^25
+export const CELL_MULTIPLIER = 67108864; // 2^26
+
+export function packCell(x: number, y: number): number {
+	return (x + CELL_OFFSET) * CELL_MULTIPLIER + (y + CELL_OFFSET);
 }
 
-/**
- * Parse cell key back to coordinates
- */
-export function parseCellKey(key: string): { x: number; y: number } {
-	const [x, y] = key.split(",").map(Number);
-	return { x, y };
+export function unpackCell(v: number): { x: number; y: number } {
+	const yOff = v % CELL_MULTIPLIER;
+	const xOff = (v - yOff) / CELL_MULTIPLIER;
+	return { x: xOff - CELL_OFFSET, y: yOff - CELL_OFFSET };
 }
+
+// Additive offsets for the 8 cardinal/diagonal neighbors — no unpack needed.
+export const CELL_NEIGHBOR_OFFSETS: readonly number[] = [
+	-CELL_MULTIPLIER - 1,
+	-CELL_MULTIPLIER,
+	-CELL_MULTIPLIER + 1,
+	-1,
+	1,
+	CELL_MULTIPLIER - 1,
+	CELL_MULTIPLIER,
+	CELL_MULTIPLIER + 1,
+];
 
 /**
  * Calculate distance between two lat/lng points in meters (Haversine)
@@ -247,7 +261,7 @@ export function trimPolylineByDistance(
 /**
  * Get bounding box of a set of cells
  */
-export function getCellBounds(cells: Set<string>): {
+export function getCellBounds(cells: Set<number>): {
 	minX: number;
 	minY: number;
 	maxX: number;
@@ -260,8 +274,8 @@ export function getCellBounds(cells: Set<string>): {
 	let maxX = -Infinity;
 	let maxY = -Infinity;
 
-	for (const key of cells) {
-		const { x, y } = parseCellKey(key);
+	for (const v of cells) {
+		const { x, y } = unpackCell(v);
 		minX = Math.min(minX, x);
 		minY = Math.min(minY, y);
 		maxX = Math.max(maxX, x);

@@ -1,31 +1,26 @@
 import type { City, CityStats } from "./geocoding/city-manager";
-import { cellKey, parseCellKey } from "./projection";
+import { CELL_NEIGHBOR_OFFSETS } from "./projection";
 
 // ============ Core visited cell metrics ============
 
 export function computeVisitedCountForCells(
-	targetCells: Set<string>,
-	visitedCells: Set<string>,
+	targetCells: Set<number>,
+	visitedCells: Set<number>,
 ): number {
 	if (targetCells.size === 0) return 0;
 	let visited = 0;
-	for (const cell of targetCells) {
-		if (visitedCells.has(cell)) {
+	for (const v of targetCells) {
+		if (visitedCells.has(v)) {
 			visited++;
 			continue;
 		}
-		const { x, y } = parseCellKey(cell);
+		// Fuzzy match: check 8 neighbors using precomputed integer offsets (no unpack needed)
 		let found = false;
-		// Fuzzy match: check 3x3 grid around the target cell to account for GPS drift
-		for (let dx = -1; dx <= 1; dx++) {
-			for (let dy = -1; dy <= 1; dy++) {
-				if (dx === 0 && dy === 0) continue;
-				if (visitedCells.has(cellKey(x + dx, y + dy))) {
-					found = true;
-					break;
-				}
+		for (const off of CELL_NEIGHBOR_OFFSETS) {
+			if (visitedCells.has(v + off)) {
+				found = true;
+				break;
 			}
-			if (found) break;
 		}
 		if (found) visited++;
 	}
@@ -33,8 +28,8 @@ export function computeVisitedCountForCells(
 }
 
 export function computeVisitedPercentageForCells(
-	targetCells: Set<string>,
-	visitedCells: Set<string>,
+	targetCells: Set<number>,
+	visitedCells: Set<number>,
 ): number {
 	const visited = computeVisitedCountForCells(targetCells, visitedCells);
 	return targetCells.size === 0 ? 0 : (visited / targetCells.size) * 100;
@@ -42,7 +37,7 @@ export function computeVisitedPercentageForCells(
 
 // ============ City stats ============
 
-export function computeCityStats(cities: Iterable<City>, visitedCells: Set<string>): CityStats[] {
+export function computeCityStats(cities: Iterable<City>, visitedCells: Set<number>): CityStats[] {
 	const stats: CityStats[] = [];
 	for (const city of cities) {
 		// Only show stats if road cells are computed

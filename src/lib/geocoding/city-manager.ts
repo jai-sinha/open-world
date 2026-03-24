@@ -8,7 +8,7 @@ export interface City {
 	name: string;
 	displayName: string;
 	boundary: Feature<Polygon | MultiPolygon>;
-	roadCells: Set<string> | null; // Road-only cells (async computed)
+	roadCells: Set<number> | null; // Road-only cells (async computed)
 	source: "self-hosted" | "nominatim";
 	center?: { lat: number; lng: number }; // Cache center for distance lookups
 }
@@ -43,7 +43,7 @@ type CityProcessorResponse =
 
 export class CityManager {
 	private worker: Worker;
-	private visitedCells: Set<string>;
+	private visitedCells: Set<number>;
 	private cellSize: number;
 	private tilesBaseUrl?: string;
 	private latestStats: CityStats[] = [];
@@ -52,7 +52,7 @@ export class CityManager {
 	private discoveryPromiseResolve?: (stats: CityStats[]) => void;
 	private viewportStatsResolve?: (percentage: number) => void;
 
-	constructor(visitedCells: Set<string>, cellSize: number, tilesBaseUrl?: string) {
+	constructor(visitedCells: Set<number>, cellSize: number, tilesBaseUrl?: string) {
 		this.visitedCells = visitedCells;
 		this.cellSize = cellSize;
 		this.tilesBaseUrl = tilesBaseUrl;
@@ -89,7 +89,7 @@ export class CityManager {
 		};
 	}
 
-	public updateVisitedCells(cells: Set<string>) {
+	public updateVisitedCells(cells: Set<number>) {
 		this.visitedCells = cells;
 		this.worker.postMessage({
 			type: "UPDATE_VISITED_CELLS",

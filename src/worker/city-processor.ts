@@ -1,5 +1,5 @@
 import type { Feature, Polygon, MultiPolygon } from "geojson";
-import { metersToLatLng } from "../lib/projection";
+import { metersToLatLng, packCell, unpackCell } from "../lib/projection";
 import type { StravaActivity } from "../types";
 import { computeCityStats, computeVisitedPercentageForCells } from "../lib/stats";
 import { getRoadCellsForBbox } from "../lib/tiles";
@@ -7,8 +7,6 @@ import { WorldLookup } from "../lib/geocoding/world-lookup";
 import type { WorldLookupResult } from "../lib/geocoding/world-lookup";
 import { PMTiles } from "pmtiles";
 import { openDB, type IDBPDatabase, type DBSchema } from "idb";
-import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
-import { point } from "@turf/helpers";
 
 // IndexedDB schema for city boundary cache
 interface CityBoundaryDB extends DBSchema {
@@ -28,7 +26,7 @@ interface CityRoadCellsDB extends DBSchema {
 		key: string; // osmId
 		value: {
 			osmId: string;
-			roadCells: string[]; // Array of cell keys
+			roadCells: Int32Array; // interleaved x,y pairs of packed integer cells
 			cellSize: number;
 			timestamp: number;
 		};
@@ -54,9 +52,12 @@ async function getBoundaryDb(): Promise<IDBPDatabase<CityBoundaryDB>> {
 
 async function getRoadCellsDb(): Promise<IDBPDatabase<CityRoadCellsDB>> {
 	if (roadCellsDb) return roadCellsDb;
-	roadCellsDb = await openDB<CityRoadCellsDB>("city-road-cells", 1, {
-		upgrade(db) {
-			if (!db.objectStoreNames.contains("cityRoadCells")) {
+	roadCellsDb = await openDB<CityRoadCellsDB>("city-road-cells", 2, {
+		upgrade(db, _oldVersion, _newVersion, transaction) {
+			// Wipe on upgrade — roadCells format changed to Int32Array
+			if (db.objectStoreNames.contains("cityRoadCells")) {
+				transaction.objectStore("cityRoadCells").clear();
+			} else {
 				db.createObjectStore("cityRoadCells", { keyPath: "osmId" });
 			}
 		},
@@ -64,7 +65,7 @@ async function getRoadCellsDb(): Promise<IDBPDatabase<CityRoadCellsDB>> {
 	return roadCellsDb;
 }
 
-async function getCachedRoadCells(osmId: string, cellSize: number): Promise<Set<string> | null> {
+async function getCachedRoadCells(osmId: string, cellSize: number): Promise<Set<number> | null> {
 	try {
 		const db = await getRoadCellsDb();
 		const record = await db.get("cityRoadCells", osmId);
@@ -73,8 +74,12 @@ async function getCachedRoadCells(osmId: string, cellSize: number): Promise<Set<
 			record.cellSize === cellSize &&
 			Date.now() - record.timestamp < ROAD_CELLS_CACHE_MAX_AGE_MS
 		) {
-			console.debug(`[RoadCellCache] HIT for ${osmId}: ${record.roadCells.length} cells`);
-			return new Set(record.roadCells);
+			console.debug(`[RoadCellCache] HIT for ${osmId}: ${record.roadCells.length / 2} cells`);
+			const cells = new Set<number>();
+			for (let i = 0; i < record.roadCells.length; i += 2) {
+				cells.add(packCell(record.roadCells[i], record.roadCells[i + 1]));
+			}
+			return cells;
 		}
 	} catch (e) {
 		console.warn("Failed to read road cells from cache:", e);
@@ -84,14 +89,21 @@ async function getCachedRoadCells(osmId: string, cellSize: number): Promise<Set<
 
 async function cacheRoadCells(
 	osmId: string,
-	roadCells: Set<string>,
+	roadCells: Set<number>,
 	cellSize: number,
 ): Promise<void> {
 	try {
 		const db = await getRoadCellsDb();
+		const arr = new Int32Array(roadCells.size * 2);
+		let i = 0;
+		for (const v of roadCells) {
+			const { x, y } = unpackCell(v);
+			arr[i++] = x;
+			arr[i++] = y;
+		}
 		await db.put("cityRoadCells", {
 			osmId,
-			roadCells: Array.from(roadCells),
+			roadCells: arr,
 			cellSize,
 			timestamp: Date.now(),
 		});
@@ -151,6 +163,68 @@ async function cacheBoundary(
 	}
 }
 
+// ── Inline point-in-polygon (replaces @turf/boolean-point-in-polygon) ────────
+// Pre-flatten a GeoJSON ring to a Float64Array [lng0, lat0, lng1, lat1, ...]
+function flattenRing(ring: number[][]): Float64Array {
+	const arr = new Float64Array(ring.length * 2);
+	for (let i = 0; i < ring.length; i++) {
+		arr[i * 2] = ring[i][0]; // lng
+		arr[i * 2 + 1] = ring[i][1]; // lat
+	}
+	return arr;
+}
+
+// Standard ray-casting test on a pre-flattened ring
+function pointInFlatRing(ring: Float64Array, lng: number, lat: number): boolean {
+	const n = ring.length >> 1; // n = number of vertices
+	let inside = false;
+	let j = n - 1;
+	for (let i = 0; i < n; i++) {
+		const xi = ring[i * 2];
+		const yi = ring[i * 2 + 1];
+		const xj = ring[j * 2];
+		const yj = ring[j * 2 + 1];
+		if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+			inside = !inside;
+		}
+		j = i;
+	}
+	return inside;
+}
+
+// Check against pre-flattened polygon rings.
+// outerRings: first ring of each sub-polygon; holesPerPoly: subsequent rings (holes).
+function pointInFlatPolygon(outerRings: Float64Array[], holesPerPoly: Float64Array[][], lng: number, lat: number): boolean {
+	for (let p = 0; p < outerRings.length; p++) {
+		if (!pointInFlatRing(outerRings[p], lng, lat)) continue;
+		const holes = holesPerPoly[p];
+		let inHole = false;
+		for (const hole of holes) {
+			if (pointInFlatRing(hole, lng, lat)) { inHole = true; break; }
+		}
+		if (!inHole) return true;
+	}
+	return false;
+}
+
+// Pre-flatten a city boundary feature. Returns [outerRings, holesPerPoly].
+function flattenBoundary(feature: Feature<Polygon | MultiPolygon>): [Float64Array[], Float64Array[][]] {
+	const outerRings: Float64Array[] = [];
+	const holesPerPoly: Float64Array[][] = [];
+	if (feature.geometry.type === "Polygon") {
+		const rings = feature.geometry.coordinates;
+		outerRings.push(flattenRing(rings[0]));
+		holesPerPoly.push(rings.slice(1).map(flattenRing));
+	} else {
+		for (const poly of feature.geometry.coordinates) {
+			outerRings.push(flattenRing(poly[0]));
+			holesPerPoly.push(poly.slice(1).map(flattenRing));
+		}
+	}
+	return [outerRings, holesPerPoly];
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Constants
 const DEFAULT_TILES_BASE_URL = "https://tiles.jsinha.com";
 
@@ -160,7 +234,9 @@ export interface City {
 	name: string;
 	displayName: string;
 	boundary: Feature<Polygon | MultiPolygon>;
-	roadCells: Set<string> | null; // Road-only cells (async computed)
+	flatOuter: Float64Array[];   // pre-flattened outer rings for fast PIP
+	flatHoles: Float64Array[][]; // pre-flattened holes per polygon
+	roadCells: Set<number> | null; // Road-only cells (async computed)
 	roadTiles: string; // PMTiles filename for road data, e.g. "europe.pmtiles"
 	source: "self-hosted";
 	center?: { lat: number; lng: number }; // Cache center for distance lookups
@@ -181,7 +257,7 @@ export type CityProcessorMessage =
 			type: "DISCOVER_CITIES";
 			payload: {
 				activities: StravaActivity[];
-				visitedCells: string[];
+				visitedCells: number[];
 				cellSize: number;
 				tilesBaseUrl?: string;
 			};
@@ -189,7 +265,7 @@ export type CityProcessorMessage =
 	| {
 			type: "UPDATE_VISITED_CELLS";
 			payload: {
-				visitedCells: string[];
+				visitedCells: number[];
 			};
 	  }
 	| {
@@ -220,7 +296,7 @@ export type CityProcessorResponse =
 
 class CityProcessor {
 	private cities = new Map<string, City>();
-	private visitedCells = new Set<string>();
+	private visitedCells = new Set<number>();
 	private cellSize = 20;
 	private isProcessing = false;
 
@@ -230,9 +306,10 @@ class CityProcessor {
 	private roadCellTotal = 0;
 	private roadCellProcessed = 0;
 
-	// Road cell computation queue
+	// Road cell computation queue + concurrency pool
 	private roadCellQueue: City[] = [];
-	private isProcessingRoadCells = false;
+	private activeCityCount = 0;
+	private readonly MAX_CONCURRENT_CITIES = 3;
 
 	// PMTiles Instance Cache (keyed by full URL)
 	private pmtilesCache = new Map<string, PMTiles>();
@@ -251,12 +328,12 @@ class CityProcessor {
 		switch (type) {
 			case "DISCOVER_CITIES":
 				if (payload.tilesBaseUrl) this.setTilesBaseUrl(payload.tilesBaseUrl);
-				this.visitedCells = new Set(payload.visitedCells);
+				this.visitedCells = new Set<number>(payload.visitedCells);
 				this.cellSize = payload.cellSize;
 				this.discoverCitiesFromActivities(payload.activities);
 				break;
 			case "UPDATE_VISITED_CELLS":
-				this.visitedCells = new Set(payload.visitedCells);
+				this.visitedCells = new Set<number>(payload.visitedCells);
 				this.postStats("STATS_UPDATE");
 				break;
 			case "CALCULATE_VIEWPORT_STATS":
@@ -406,7 +483,7 @@ class CityProcessor {
 			// Add a timeout safeguard to prevent infinite stalling (5 minutes max)
 			const MAX_WAIT_MS = 5 * 60 * 1000;
 			const waitStart = Date.now();
-			while (this.isProcessingRoadCells || this.roadCellQueue.length > 0) {
+			while (this.activeCityCount > 0 || this.roadCellQueue.length > 0) {
 				await new Promise((resolve) => setTimeout(resolve, 200));
 				this.postProgress(); // Keep updating progress while waiting
 
@@ -414,11 +491,11 @@ class CityProcessor {
 				if (Date.now() - waitStart > MAX_WAIT_MS) {
 					console.warn(
 						`Road cell computation timed out after ${MAX_WAIT_MS / 1000}s. ` +
-							`Queue: ${this.roadCellQueue.length}, Processing: ${this.isProcessingRoadCells}`,
+							`Queue: ${this.roadCellQueue.length}, Active: ${this.activeCityCount}`,
 					);
 					// Force exit the loop - we'll show partial results
 					this.roadCellQueue = [];
-					this.isProcessingRoadCells = false;
+					this.activeCityCount = 0;
 					break;
 				}
 			}
@@ -540,12 +617,16 @@ class CityProcessor {
 				center = { lat: fallbackLat, lng: fallbackLng };
 			}
 
+			const [flatOuter, flatHoles] = flattenBoundary(feature);
+
 			const city: City = {
 				id: lookupResult.osmId,
 				osmId: lookupResult.osmId,
 				name: lookupResult.name,
 				displayName: lookupResult.name,
 				boundary: feature,
+				flatOuter,
+				flatHoles,
 				roadCells: null,
 				roadTiles: lookupResult.roadTiles,
 				source: "self-hosted",
@@ -566,19 +647,17 @@ class CityProcessor {
 		this.processRoadCellQueue();
 	}
 
-	private async processRoadCellQueue() {
-		if (this.isProcessingRoadCells || this.roadCellQueue.length === 0) return;
-
-		this.isProcessingRoadCells = true;
-
-		while (this.roadCellQueue.length > 0) {
+	private processRoadCellQueue() {
+		while (this.roadCellQueue.length > 0 && this.activeCityCount < this.MAX_CONCURRENT_CITIES) {
 			const city = this.roadCellQueue.shift()!;
-			await this.computeRoadCellsForCity(city);
-			// Update stats after each city is processed so UI updates incrementally
-			this.postStats("STATS_UPDATE");
+			this.activeCityCount++;
+			this.computeRoadCellsForCity(city)
+				.then(() => this.postStats("STATS_UPDATE"))
+				.finally(() => {
+					this.activeCityCount--;
+					this.processRoadCellQueue();
+				});
 		}
-
-		this.isProcessingRoadCells = false;
 	}
 
 	private async computeRoadCellsForCity(city: City) {
@@ -601,13 +680,11 @@ class CityProcessor {
 			const startTime = performance.now();
 			const pmtiles = this.getPMTilesInstance(city.roadTiles);
 
-			// Get lat/lng bbox directly from the city boundary for adaptive zoom calculation
 			const bbox = this.getBoundaryBbox(city.boundary);
 			if (!bbox) return;
 
 			const { minLat, maxLat, minLng, maxLng } = bbox;
 
-			// Use adaptive zoom based on city size
 			const zoom = getAdaptiveZoom(minLat, maxLat, minLng, maxLng);
 			const tileEstimate =
 				Math.pow(2, zoom - 12) * ((maxLat - minLat) / 0.08) * ((maxLng - minLng) / 0.08);
@@ -631,21 +708,15 @@ class CityProcessor {
 				`[RoadCells] ${city.name}: fetched ${roadCells.size} raw road cells in ${((fetchTime - startTime) / 1000).toFixed(1)}s`,
 			);
 
-			// Filter road cells using direct point-in-polygon check on boundary
-			// This avoids the expensive polygon rasterization step
-			const filteredRoadCells = new Set<string>();
-			for (const cell of roadCells) {
-				const [xStr, yStr] = cell.split(",");
-				const x = parseInt(xStr, 10);
-				const y = parseInt(yStr, 10);
-				// Convert cell coordinates back to lat/lng
+			// Filter road cells using inline ray-cast on pre-flattened rings
+			const filteredRoadCells = new Set<number>();
+			for (const v of roadCells) {
+				const { x, y } = unpackCell(v);
 				const centerX = x * this.cellSize + this.cellSize / 2;
 				const centerY = y * this.cellSize + this.cellSize / 2;
-				const latLng = metersToLatLng(centerX, centerY);
-
-				// Check if this point is within the city boundary
-				if (booleanPointInPolygon(point([latLng.lng, latLng.lat]), city.boundary)) {
-					filteredRoadCells.add(cell);
+				const { lat, lng } = metersToLatLng(centerX, centerY);
+				if (pointInFlatPolygon(city.flatOuter, city.flatHoles, lng, lat)) {
+					filteredRoadCells.add(v);
 				}
 			}
 

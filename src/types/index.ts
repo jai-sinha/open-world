@@ -49,7 +49,7 @@ export interface ProcessingConfig {
 }
 
 export interface ProcessingState {
-	visitedCells: Set<string>; // "x,y" keys
+	visitedCells: Set<number>; // packed integer cells
 	processedActivityIds: Set<number>;
 	totalActivities: number;
 	processedActivities: number;
@@ -71,7 +71,7 @@ export interface WorkerResponse {
 export interface BatchProcessRequest {
 	activities: StravaActivity[];
 	config: ProcessingConfig;
-	existingCells?: string[]; // for resuming
+	existingCells?: number[]; // packed integer cells (for resuming)
 }
 
 export interface RenderUpdate {
@@ -111,7 +111,7 @@ export interface AppConfig {
 
 export interface StoredState {
 	version: number;
-	visitedCells: string[];
+	visitedCells: number[]; // packed integer cells (see packCell in projection.ts)
 	processedActivityIds: number[];
 	config: ProcessingConfig;
 	activities: StravaActivity[];

@@ -5,7 +5,7 @@ import { openDB, type IDBPDatabase } from "idb";
 import type { StoredState, ProcessingConfig } from "../types";
 
 const DB_NAME = "StravaExplorationMap";
-const DB_VERSION = 1;
+const DB_VERSION = 2; // bumped: visitedCells now number[] (packed integers)
 const STORE_NAME = "explorationState";
 
 interface ExplorationDB {
@@ -23,9 +23,11 @@ let dbPromise: Promise<IDBPDatabase<ExplorationDB>> | null = null;
 async function getDB(): Promise<IDBPDatabase<ExplorationDB>> {
 	if (!dbPromise) {
 		dbPromise = openDB<ExplorationDB>(DB_NAME, DB_VERSION, {
-			upgrade(db) {
-				// Create object store if it doesn't exist
-				if (!db.objectStoreNames.contains(STORE_NAME)) {
+			upgrade(db, _oldVersion, _newVersion, transaction) {
+				// Wipe all state on any schema upgrade — data will recompute from activities
+				if (db.objectStoreNames.contains(STORE_NAME)) {
+					transaction.objectStore(STORE_NAME).clear();
+				} else {
 					db.createObjectStore(STORE_NAME);
 				}
 			},
@@ -38,7 +40,7 @@ async function getDB(): Promise<IDBPDatabase<ExplorationDB>> {
  * Save exploration state to IndexedDB
  */
 export async function saveState(
-	visitedCells: Set<string>,
+	visitedCells: Set<number>,
 	processedActivityIds: Set<number>,
 	config: ProcessingConfig,
 	activities: any[] = [],
@@ -65,7 +67,7 @@ export async function saveState(
  * Load exploration state from IndexedDB
  */
 export async function loadState(): Promise<{
-	visitedCells: Set<string>;
+	visitedCells: Set<number>;
 	processedActivityIds: Set<number>;
 	config: ProcessingConfig;
 	activities: any[];
@@ -89,7 +91,7 @@ export async function loadState(): Promise<{
 		const activities = state.activities || [];
 
 		return {
-			visitedCells: new Set(state.visitedCells),
+			visitedCells: new Set<number>(state.visitedCells),
 			processedActivityIds: new Set(state.processedActivityIds),
 			config: state.config,
 			activities,
@@ -168,7 +170,7 @@ export async function getStorageStats(): Promise<{
  * Merge new cells into existing state (for incremental updates)
  */
 export async function mergeCells(
-	newCells: Set<string>,
+	newCells: Set<number>,
 	newActivityIds: Set<number>,
 	activities: any[] = [],
 ): Promise<void> {
@@ -193,7 +195,7 @@ export async function mergeCells(
 		}
 
 		// Merge sets
-		const mergedCells = new Set([...existing.visitedCells, ...newCells]);
+		const mergedCells = new Set<number>([...existing.visitedCells, ...newCells]);
 		const mergedIds = new Set([...existing.processedActivityIds, ...newActivityIds]);
 
 		await saveState(
