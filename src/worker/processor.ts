@@ -288,7 +288,7 @@ async function reprocessAllActivities(batchSize: number = 20): Promise<void> {
 function updateConfig(config: Partial<ProcessingConfig> & { forceReprocess?: boolean }): void {
 	currentConfig = { ...currentConfig, ...config };
 
-	const force = (config as any).forceReprocess === true;
+	const force = config.forceReprocess === true;
 
 	// Determine whether reprocessing is needed
 	const needsReprocess =

@@ -2,7 +2,7 @@
 // Enables fast reload without re-processing all activities
 
 import { openDB, type IDBPDatabase } from "idb";
-import type { StoredState, ProcessingConfig } from "../types";
+import type { StoredState } from "../types";
 
 const DB_NAME = "StravaExplorationMap";
 const DB_VERSION = 2; // bumped: visitedCells now number[] (packed integers)
@@ -110,7 +110,6 @@ export async function clearState(): Promise<void> {
 	try {
 		const db = await getDB();
 		await db.delete(STORE_NAME, "current");
-		console.log("State cleared");
 	} catch (error) {
 		console.error("Failed to clear state from IndexedDB:", error);
 		throw error;

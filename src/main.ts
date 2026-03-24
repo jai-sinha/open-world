@@ -58,8 +58,6 @@ class ExplorationMapApp {
 	private statsDebounceTimer?: number;
 
 	async initialize(): Promise<void> {
-		console.log("Initializing Exploration Map...");
-
 		await this.fetchConfig();
 		this.stravaClient = createStravaClient(APP_CONFIG.strava);
 
@@ -321,7 +319,6 @@ class ExplorationMapApp {
 				data: { activities: newActivities, batchSize: APP_CONFIG.processing.batchSize },
 			});
 
-			console.log("Latest activity:", activities[0].name, new Date(activities[0].start_date_local).toLocaleString(), "at", activities[0].start_latlng);
 			const [lat, long] = activities[0].start_latlng as [number, number];
 			this.map?.jumpTo({ center: [long, lat], zoom: 12 });
 
@@ -495,8 +492,7 @@ class ExplorationMapApp {
 				this.currentConfig,
 				this.allActivities,
 			);
-			console.log("State saved");
-		} catch (error) {
+			} catch (error) {
 			console.error("Failed to save state:", error);
 		}
 	}
@@ -571,7 +567,6 @@ const init = async () => {
 	app = new ExplorationMapApp();
 	try {
 		await app.initialize();
-		console.log("App initialized");
 	} catch (e) {
 		console.error("Init failed:", e);
 		alert(`Failed to initialize application: ${e instanceof Error ? e.message : String(e)}`);

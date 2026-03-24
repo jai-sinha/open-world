@@ -88,7 +88,6 @@ async function getCachedRoadCells(osmId: string, cellSize: number): Promise<Set<
 			record.cellSize === cellSize &&
 			Date.now() - record.timestamp < ROAD_CELLS_CACHE_MAX_AGE_MS
 		) {
-			console.debug(`[RoadCellCache] HIT for ${osmId}: ${record.roadCells.length / 2} cells`);
 			const cells = new Set<number>();
 			for (let i = 0; i < record.roadCells.length; i += 2) {
 				cells.add(packCell(record.roadCells[i], record.roadCells[i + 1]));
@@ -121,7 +120,6 @@ async function cacheRoadCells(
 			cellSize,
 			timestamp: Date.now(),
 		});
-		console.debug(`[RoadCellCache] STORED ${osmId}: ${roadCells.size} cells`);
 	} catch (e) {
 		console.warn("Failed to cache road cells:", e);
 	}
@@ -202,9 +200,14 @@ function dpSimplify(data: Float64Array, tolerance: number): Float64Array {
 		let maxD2 = -1, maxIdx = start;
 		for (let i = start + 1; i < end; i++) {
 			const px = data[i * 2] - x1, py = data[i * 2 + 1] - y1;
-			const d2 = len2 === 0
-				? px * px + py * py
-				: (() => { const t = (px * dx + py * dy) / len2; const qx = px - t * dx, qy = py - t * dy; return qx * qx + qy * qy; })();
+			let d2: number;
+			if (len2 === 0) {
+				d2 = px * px + py * py;
+			} else {
+				const t = (px * dx + py * dy) / len2;
+				const qx = px - t * dx, qy = py - t * dy;
+				d2 = qx * qx + qy * qy;
+			}
 			if (d2 > maxD2) { maxD2 = d2; maxIdx = i; }
 		}
 		if (maxD2 > tol2) {
@@ -488,12 +491,6 @@ class CityProcessor {
 
 			const percentage = computeVisitedPercentageForCells(roadCells, this.visitedCells);
 
-			if (percentage === 0 && roadCells.size > 0 && this.visitedCells.size > 0) {
-				console.debug(
-					`Viewport 0% debug: RoadCells=${roadCells.size}, Visited=${this.visitedCells.size}`,
-				);
-			}
-
 			self.postMessage({
 				type: "VIEWPORT_STATS",
 				payload: { percentage },
@@ -743,13 +740,9 @@ class CityProcessor {
 			const cachedCells = await getCachedRoadCells(city.osmId, this.cellSize);
 			if (cachedCells) {
 				city.roadCells = cachedCells;
-				console.debug(
-					`[RoadCells] Using cached road cells for ${city.name} (${city.osmId}): ${cachedCells.size} cells`,
-				);
 				return;
 			}
 
-			const startTime = performance.now();
 			const pmtiles = this.getPMTilesInstance(city.roadTiles);
 
 			const bbox = this.getBoundaryBbox(city.boundary);
@@ -758,11 +751,6 @@ class CityProcessor {
 			const { minLat, maxLat, minLng, maxLng } = bbox;
 
 			const zoom = getAdaptiveZoom(minLat, maxLat, minLng, maxLng);
-			const tileEstimate =
-				Math.pow(2, zoom - 12) * ((maxLat - minLat) / 0.08) * ((maxLng - minLng) / 0.08);
-			console.debug(
-				`[RoadCells] Computing for ${city.name}: bbox=${(maxLat - minLat).toFixed(3)}°×${(maxLng - minLng).toFixed(3)}°, zoom=${zoom}, ~${Math.round(tileEstimate)} tiles`,
-			);
 
 			const roadCells = await getRoadCellsForBbox(
 				minLat,
@@ -771,19 +759,12 @@ class CityProcessor {
 				maxLng,
 				this.cellSize,
 				zoom,
-				true, // useCache
+				true,
 				pmtiles,
 			);
 
-			const fetchTime = performance.now();
-			console.debug(
-				`[RoadCells] ${city.name}: fetched ${roadCells.size} raw road cells in ${((fetchTime - startTime) / 1000).toFixed(1)}s`,
-			);
-
-			// Filter road cells using inline ray-cast on pre-flattened meter-space rings.
-			// centerX/centerY are already in Web Mercator meters — no coordinate conversion needed.
-			// Yield every YIELD_INTERVAL iterations so network/IDB callbacks can fire while
-			// this synchronous loop runs (otherwise the worker event loop is fully blocked).
+			// Filter road cells to those inside the city boundary using inline ray-cast.
+			// Polygon rings are pre-flattened to Web Mercator meters with bbox guards.
 			const filteredRoadCells = new Set<number>();
 			let pipCount = 0;
 			for (const v of roadCells) {
@@ -796,20 +777,8 @@ class CityProcessor {
 				if (++pipCount % YIELD_INTERVAL === 0) await yieldToEventLoop();
 			}
 
-			const pipTime = performance.now();
-			console.debug(
-				`[RoadCells] ${city.name}: PIP filter ${roadCells.size}→${filteredRoadCells.size} cells in ${((pipTime - fetchTime) / 1000).toFixed(2)}s`,
-			);
-
 			city.roadCells = filteredRoadCells;
-
-			// Cache the computed road cells — fire-and-forget, don't block city completion.
 			cacheRoadCells(city.osmId, filteredRoadCells, this.cellSize).catch(console.warn);
-
-			const totalTime = performance.now();
-			console.debug(
-				`[RoadCells] ${city.name} (${city.osmId}): ${filteredRoadCells.size} cells (from ${roadCells.size} raw) in ${((totalTime - startTime) / 1000).toFixed(1)}s`,
-			);
 		} catch (e) {
 			console.warn(`Failed to compute road cells for ${city.id}:`, e);
 		} finally {
@@ -872,9 +841,6 @@ class CityProcessor {
 
 	private postStats(type: "COMPLETE" | "STATS_UPDATE") {
 		const stats = computeCityStats(this.cities.values(), this.visitedCells);
-		if (stats.length > 0) {
-			console.debug(`Posting stats (${type}):`, stats);
-		}
 		self.postMessage({
 			type,
 			payload: { stats },
