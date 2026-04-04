@@ -85,13 +85,6 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 		}
 	}
 
-	/**
-	 * Get current rectangle count
-	 */
-	getRectangleCount(): number {
-		return this.rectangles.length;
-	}
-
 	onAdd(map: MapLibreMap, _gl: WebGLRenderingContext): void {
 		this.map = map;
 	}

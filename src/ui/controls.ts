@@ -137,7 +137,7 @@ export class Controls {
 	updateStats(stats: {
 		cells?: number;
 		activities?: number;
-		rectangles?: number;
+		distance?: number;
 		area?: number;
 		viewportExplored?: number;
 	}): void {

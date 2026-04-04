@@ -9,7 +9,7 @@ import type {
 	ProcessingConfig,
 	Rectangle,
 } from "../types";
-import { pointToCell, packCell, samplePolyline, trimPolylineByDistance } from "../lib/projection";
+import { pointToCell, packCell, samplePolyline } from "../lib/projection";
 import { mergeToRectangles } from "../lib/grid";
 
 // Worker state
@@ -46,9 +46,6 @@ function processBatch(
 		// Skip if already processed
 		if (processedActivityIds.has(activity.id)) continue;
 
-		// Skip private activities if configured
-		if (config.skipPrivate && activity.private) continue;
-
 		// Get polyline
 		const encodedPolyline = activity.map?.summary_polyline || activity.map?.polyline;
 		if (!encodedPolyline) {
@@ -65,11 +62,8 @@ function processBatch(
 				continue;
 			}
 
-			// Apply privacy filter to remove start/end points
-			const filteredPoints = applyPrivacyFilter(points, config);
-
 			// Sample points along the polyline
-			const sampledPoints = samplePolyline(filteredPoints, config.samplingStep);
+			const sampledPoints = samplePolyline(points, config.samplingStep);
 
 			// Mark cells
 			for (const point of sampledPoints) {
@@ -91,19 +85,6 @@ function processBatch(
 
 	return { cellsAdded, rectangles };
 }
-
-/**
- * Apply privacy filter to remove start/end points
- * Delegates to shared `trimPolylineByDistance` in projection utilities.
- */
-function applyPrivacyFilter(
-	points: Array<[number, number]>,
-	config: ProcessingConfig,
-): Array<[number, number]> {
-	return trimPolylineByDistance(points, config.privacyDistance);
-}
-
-/* Haversine helper removed from worker; use shared utilities (trimPolylineByDistance/haversineDistance) from lib/projection instead. */
 
 /**
  * Initialize worker with existing state
@@ -294,9 +275,7 @@ function updateConfig(config: Partial<ProcessingConfig> & { forceReprocess?: boo
 	const needsReprocess =
 		config.cellSize !== undefined ||
 		config.samplingStep !== undefined ||
-		config.privacyDistance !== undefined ||
 		config.snapToGrid !== undefined ||
-		config.skipPrivate !== undefined ||
 		force;
 
 	const response: WorkerResponse = {

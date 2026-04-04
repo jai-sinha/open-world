@@ -285,6 +285,9 @@ class ExplorationMapApp {
 			this.routeLayer?.setActivities(activities);
 			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
+			const [lat, long] = activities[0].start_latlng as [number, number];
+			this.map?.jumpTo({ center: [long, lat], zoom: 12 });
+
 			this.cityManager?.discoverCitiesFromActivities(activities);
 
 			// Sync worker with full list
@@ -304,10 +307,6 @@ class ExplorationMapApp {
 				type: "process",
 				data: { activities: newActivities, batchSize: APP_CONFIG.processing.batchSize },
 			});
-
-			const [lat, long] = activities[0].start_latlng as [number, number];
-			this.map?.jumpTo({ center: [long, lat], zoom: 12 });
-
 		} catch (error) {
 			console.error("Fetch error:", error);
 			this.controls?.showMessage("Failed to fetch activities", "error");
@@ -382,19 +381,22 @@ class ExplorationMapApp {
 
 		// Update stats if available, or fall back to current state
 		const cellCount = data.totalCells ?? this.visitedCells.size;
-		const rectCount = data.rectangles?.length;
 
-		this.updateStatsUI(cellCount, rectCount);
+		this.updateStatsUI(cellCount);
 	}
 
-	private async updateStatsUI(cellCount?: number, rectCount?: number): Promise<void> {
+	private async updateStatsUI(cellCount?: number): Promise<void> {
 		const cells = cellCount ?? this.visitedCells.size;
 		const viewportStats = await this.calculateViewportStats();
+
+		const totalDistanceKm = this.allActivities.reduce((sum, activity) => {
+			return sum + (activity.distance || 0) / 1000;
+		}, 0);
 
 		this.controls?.updateStats({
 			cells,
 			activities: this.processedActivityIds.size,
-			rectangles: rectCount,
+			distance: totalDistanceKm,
 			area: (cells * Math.pow(this.currentConfig.cellSize, 2)) / 1_000_000,
 			viewportExplored: viewportStats,
 		});
@@ -441,8 +443,6 @@ class ExplorationMapApp {
 			privacyDistance: enabled ? 400 : 0,
 			skipPrivate,
 		};
-
-		this.sendWorkerMessage({ type: "updateConfig", data: this.currentConfig });
 
 		// Update route layer immediately
 		this.routeLayer?.setStyle({ showPrivate: !this.currentConfig.skipPrivate });
