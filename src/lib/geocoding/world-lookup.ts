@@ -84,6 +84,8 @@ export interface WorldLookupResult {
 	name: string;
 	/** Road PMTiles filename that covers this city, e.g. "europe.pmtiles" */
 	roadTiles: string;
+	/** OSM admin_level of the matched boundary (higher = more specific) */
+	adminLevel: number;
 }
 
 /** Ray-casting point-in-ring test. Coordinates are [lng, lat] pairs. */
@@ -200,40 +202,14 @@ export class WorldLookup {
 		if (!tile) return null;
 
 		const { x, y } = latLngToTile(lat, lng, LOOKUP_ZOOM);
-
-		// Find the "cities" layer in the vector tile
-		const layer = tile.layers["cities"];
-		if (!layer) return null;
-
-		for (let i = 0; i < layer.length; i++) {
-			const feature = layer.feature(i);
-			const geojson = feature.toGeoJSON(x, y, LOOKUP_ZOOM);
-
-			// Only check polygon/multipolygon geometries
-			if (geojson.geometry.type !== "Polygon" && geojson.geometry.type !== "MultiPolygon") {
-				continue;
-			}
-
-			if (pointInGeoJSON(geojson as Feature<Polygon | MultiPolygon>, lng, lat)) {
-				const props = geojson.properties || {};
-				const osmId = props.osm_id;
-				const name = props.name || props["name:en"] || "";
-				const roadTiles = props.road_tiles || "";
-
-				if (!osmId) {
-					console.warn("WorldLookup: matched feature has no osm_id property", props);
-					continue;
-				}
-
-				return { osmId, name, roadTiles };
-			}
-		}
+		const result = this.bestMatchInTile(tile, x, y, LOOKUP_ZOOM, lat, lng);
+		if (result) return result;
 
 		// No polygon contained the point at this zoom — try one level higher for
 		// better boundary precision (z12 is the max in our tileset)
 		if (LOOKUP_ZOOM < 12) {
-			const result = await this.queryAtZoom(lat, lng, 12);
-			if (result) return result;
+			const fallback = await this.queryAtZoom(lat, lng, 12);
+			if (fallback) return fallback;
 		}
 
 		return null;
@@ -251,9 +227,30 @@ export class WorldLookup {
 		if (!tile) return null;
 
 		const { x, y } = latLngToTile(lat, lng, zoom);
+		return this.bestMatchInTile(tile, x, y, zoom, lat, lng);
+	}
 
+	/**
+	 * Scan every feature in a tile's "cities" layer, collect all polygons that
+	 * contain the point, and return the one with the highest admin_level (most
+	 * specific boundary). Falls back gracefully when admin_level is absent.
+	 *
+	 * This ensures a point inside both San Mateo County (admin_level=6) and
+	 * Redwood City (admin_level=8) resolves to the city, not the county.
+	 */
+	private bestMatchInTile(
+		tile: VectorTile,
+		x: number,
+		y: number,
+		zoom: number,
+		lat: number,
+		lng: number,
+	): WorldLookupResult | null {
 		const layer = tile.layers["cities"];
 		if (!layer) return null;
+
+		let best: WorldLookupResult | null = null;
+		let bestAdminLevel = -1;
 
 		for (let i = 0; i < layer.length; i++) {
 			const feature = layer.feature(i);
@@ -263,18 +260,33 @@ export class WorldLookup {
 				continue;
 			}
 
-			if (pointInGeoJSON(geojson as Feature<Polygon | MultiPolygon>, lng, lat)) {
-				const props = geojson.properties || {};
-				const osmId = props.osm_id;
-				const name = props.name || props["name:en"] || "";
-				const roadTiles = props.road_tiles || "";
+			if (!pointInGeoJSON(geojson as Feature<Polygon | MultiPolygon>, lng, lat)) {
+				continue;
+			}
 
-				if (!osmId) continue;
-				return { osmId, name, roadTiles };
+			const props = geojson.properties || {};
+			const osmId = props.osm_id;
+			if (!osmId) {
+				console.warn("WorldLookup: matched feature has no osm_id property", props);
+				continue;
+			}
+
+			const adminLevel = parseInt(props.admin_level, 10);
+			// Use -1 as sentinel when admin_level is absent so any explicit level wins
+			const effectiveLevel = isNaN(adminLevel) ? -1 : adminLevel;
+
+			if (effectiveLevel > bestAdminLevel) {
+				bestAdminLevel = effectiveLevel;
+				best = {
+					osmId,
+					name: props.name || props["name:en"] || "",
+					roadTiles: props.road_tiles || "",
+					adminLevel: effectiveLevel,
+				};
 			}
 		}
 
-		return null;
+		return best;
 	}
 
 	/**

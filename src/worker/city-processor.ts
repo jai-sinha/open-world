@@ -193,22 +193,31 @@ function dpSimplify(data: Float64Array, tolerance: number): Float64Array {
 	while (stack.length > 0) {
 		const [start, end] = stack.pop()!;
 		if (end - start < 2) continue;
-		const x1 = data[start * 2], y1 = data[start * 2 + 1];
-		const x2 = data[end * 2],   y2 = data[end * 2 + 1];
-		const dx = x2 - x1, dy = y2 - y1;
+		const x1 = data[start * 2],
+			y1 = data[start * 2 + 1];
+		const x2 = data[end * 2],
+			y2 = data[end * 2 + 1];
+		const dx = x2 - x1,
+			dy = y2 - y1;
 		const len2 = dx * dx + dy * dy;
-		let maxD2 = -1, maxIdx = start;
+		let maxD2 = -1,
+			maxIdx = start;
 		for (let i = start + 1; i < end; i++) {
-			const px = data[i * 2] - x1, py = data[i * 2 + 1] - y1;
+			const px = data[i * 2] - x1,
+				py = data[i * 2 + 1] - y1;
 			let d2: number;
 			if (len2 === 0) {
 				d2 = px * px + py * py;
 			} else {
 				const t = (px * dx + py * dy) / len2;
-				const qx = px - t * dx, qy = py - t * dy;
+				const qx = px - t * dx,
+					qy = py - t * dy;
 				d2 = qx * qx + qy * qy;
 			}
-			if (d2 > maxD2) { maxD2 = d2; maxIdx = i; }
+			if (d2 > maxD2) {
+				maxD2 = d2;
+				maxIdx = i;
+			}
 		}
 		if (maxD2 > tol2) {
 			keep[maxIdx] = 1;
@@ -219,8 +228,21 @@ function dpSimplify(data: Float64Array, tolerance: number): Float64Array {
 	for (let i = 0; i < n; i++) if (keep[i]) count++;
 	const out = new Float64Array(count * 2);
 	let o = 0;
-	for (let i = 0; i < n; i++) if (keep[i]) { out[o++] = data[i * 2]; out[o++] = data[i * 2 + 1]; }
+	for (let i = 0; i < n; i++)
+		if (keep[i]) {
+			out[o++] = data[i * 2];
+			out[o++] = data[i * 2 + 1];
+		}
 	return out;
+}
+
+// Pre-flattened polygon ring in Web Mercator metres with a precomputed bbox for fast rejection.
+interface FlatRing {
+	data: Float64Array;
+	minX: number;
+	maxX: number;
+	minY: number;
+	maxY: number;
 }
 
 // Convert a GeoJSON ring ([lng,lat][] pairs) to a FlatRing in Web Mercator meters,
@@ -234,11 +256,17 @@ function flattenRing(ring: number[][], tolerance: number): FlatRing {
 	}
 	const data = dpSimplify(raw, tolerance);
 	const n = data.length >> 1;
-	let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+	let minX = Infinity,
+		maxX = -Infinity,
+		minY = Infinity,
+		maxY = -Infinity;
 	for (let i = 0; i < n; i++) {
-		const x = data[i * 2], y = data[i * 2 + 1];
-		if (x < minX) minX = x; if (x > maxX) maxX = x;
-		if (y < minY) minY = y; if (y > maxY) maxY = y;
+		const x = data[i * 2],
+			y = data[i * 2 + 1];
+		if (x < minX) minX = x;
+		if (x > maxX) maxX = x;
+		if (y < minY) minY = y;
+		if (y > maxY) maxY = y;
 	}
 	return { data, minX, maxX, minY, maxY };
 }
@@ -254,7 +282,7 @@ function pointInFlatRing(ring: FlatRing, x: number, y: number): boolean {
 		const yi = data[i * 2 + 1];
 		const xj = data[j * 2];
 		const yj = data[j * 2 + 1];
-		if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+		if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
 			inside = !inside;
 		}
 		j = i;
@@ -263,7 +291,12 @@ function pointInFlatRing(ring: FlatRing, x: number, y: number): boolean {
 }
 
 // Check against pre-flattened polygon rings with bbox short-circuit.
-function pointInFlatPolygon(outerRings: FlatRing[], holesPerPoly: FlatRing[][], x: number, y: number): boolean {
+function pointInFlatPolygon(
+	outerRings: FlatRing[],
+	holesPerPoly: FlatRing[][],
+	x: number,
+	y: number,
+): boolean {
 	for (let p = 0; p < outerRings.length; p++) {
 		const outer = outerRings[p];
 		// Cheap bbox rejection before expensive ray-cast.
@@ -273,7 +306,10 @@ function pointInFlatPolygon(outerRings: FlatRing[], holesPerPoly: FlatRing[][], 
 		let inHole = false;
 		for (const hole of holes) {
 			if (x < hole.minX || x > hole.maxX || y < hole.minY || y > hole.maxY) continue;
-			if (pointInFlatRing(hole, x, y)) { inHole = true; break; }
+			if (pointInFlatRing(hole, x, y)) {
+				inHole = true;
+				break;
+			}
 		}
 		if (!inHole) return true;
 	}
@@ -282,7 +318,10 @@ function pointInFlatPolygon(outerRings: FlatRing[], holesPerPoly: FlatRing[][], 
 
 // Pre-flatten a city boundary feature. Returns [outerRings, holesPerPoly].
 // tolerance: simplification in meters — half a cell preserves sub-cell correctness.
-function flattenBoundary(feature: Feature<Polygon | MultiPolygon>, tolerance: number): [FlatRing[], FlatRing[][]] {
+function flattenBoundary(
+	feature: Feature<Polygon | MultiPolygon>,
+	tolerance: number,
+): [FlatRing[], FlatRing[][]] {
 	const outerRings: FlatRing[] = [];
 	const holesPerPoly: FlatRing[][] = [];
 	if (feature.geometry.type === "Polygon") {
@@ -308,7 +347,7 @@ export interface City {
 	name: string;
 	displayName: string;
 	boundary: Feature<Polygon | MultiPolygon>;
-	flatOuter: FlatRing[];   // pre-flattened outer rings for fast PIP
+	flatOuter: FlatRing[]; // pre-flattened outer rings for fast PIP
 	flatHoles: FlatRing[][]; // pre-flattened holes per polygon
 	roadCells: Set<number> | null; // Road-only cells (async computed)
 	roadTiles: string; // PMTiles filename for road data, e.g. "europe.pmtiles"
@@ -569,6 +608,38 @@ class CityProcessor {
 			}
 
 			this.postStats("COMPLETE");
+
+			// Debug: log all StravaActivities processed, grouped by city
+			const cityStats = computeCityStats(this.cities.values(), this.visitedCells);
+			const statsByCity = new Map(cityStats.map((s) => [s.cityId, s]));
+
+			const keyToActivities = new Map<string, StravaActivity[]>();
+			for (const activity of activities) {
+				if (!activity.start_latlng || activity.start_latlng.length < 2) continue;
+				const [lat, lng] = activity.start_latlng;
+				const key = `${lat.toFixed(1)},${lng.toFixed(1)}`;
+				if (!keyToActivities.has(key)) keyToActivities.set(key, []);
+				keyToActivities.get(key)!.push(activity);
+			}
+
+			const cityActivities = new Map<string, StravaActivity[]>();
+			for (const [key, cityId] of this.locationKeyToCityId) {
+				const acts = keyToActivities.get(key) ?? [];
+				if (!cityActivities.has(cityId)) cityActivities.set(cityId, []);
+				cityActivities.get(cityId)!.push(...acts);
+			}
+
+			for (const [cityId, acts] of cityActivities) {
+				const city = this.cities.get(cityId);
+				const stats = statsByCity.get(cityId);
+				console.debug({
+					city: city?.displayName ?? cityId,
+					exploration_pct: stats ? parseFloat(stats.percentage.toFixed(2)) : null,
+					road_tiles: city?.roadTiles || "(empty)",
+					road_cells_count: city?.roadCells?.size ?? "(null — computation skipped or failed)",
+					activities: acts,
+				});
+			}
 		} catch (e) {
 			console.error("City discovery failed in worker:", e);
 		} finally {
