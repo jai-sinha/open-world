@@ -2,8 +2,6 @@ import { PMTiles } from "pmtiles";
 import Pbf from "pbf";
 import { VectorTile } from "@mapbox/vector-tile";
 import { latLngToTile } from "../tiles";
-import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
-import { point as turfPoint } from "@turf/helpers";
 import type { Feature, Polygon, MultiPolygon } from "geojson";
 import { openDB, type IDBPDatabase, type DBSchema } from "idb";
 
@@ -35,8 +33,8 @@ async function getLookupDb(): Promise<IDBPDatabase<LookupCacheDB>> {
 }
 
 function coordBucketKey(lat: number, lng: number): string {
-	// Round to 2 decimals (~1-2km) for finer granularity with smaller cities
-	return `${lat.toFixed(2)},${lng.toFixed(2)}`;
+	// Round to 3 decimals (~100-200m) for finer granularity with smaller cities
+	return `${lat.toFixed(3)},${lng.toFixed(3)}`;
 }
 
 async function getCachedLookup(
@@ -88,6 +86,53 @@ export interface WorldLookupResult {
 	roadTiles: string;
 }
 
+/** Ray-casting point-in-ring test. Coordinates are [lng, lat] pairs. */
+function pointInRing(ring: number[][], px: number, py: number): boolean {
+	const n = ring.length;
+	let inside = false;
+	let j = n - 1;
+	for (let i = 0; i < n; i++) {
+		const xi = ring[i][0],
+			yi = ring[i][1];
+		const xj = ring[j][0],
+			yj = ring[j][1];
+		if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+			inside = !inside;
+		}
+		j = i;
+	}
+	return inside;
+}
+
+/** Point-in-polygon check for a GeoJSON Polygon or MultiPolygon feature. */
+function pointInGeoJSON(
+	feature: Feature<Polygon | MultiPolygon>,
+	lng: number,
+	lat: number,
+): boolean {
+	if (feature.geometry.type === "Polygon") {
+		const rings = feature.geometry.coordinates;
+		if (!pointInRing(rings[0], lng, lat)) return false;
+		for (let h = 1; h < rings.length; h++) {
+			if (pointInRing(rings[h], lng, lat)) return false;
+		}
+		return true;
+	} else {
+		for (const poly of feature.geometry.coordinates) {
+			if (!pointInRing(poly[0], lng, lat)) continue;
+			let inHole = false;
+			for (let h = 1; h < poly.length; h++) {
+				if (pointInRing(poly[h], lng, lat)) {
+					inHole = true;
+					break;
+				}
+			}
+			if (!inHole) return true;
+		}
+		return false;
+	}
+}
+
 /**
  * The zoom level at which we query the world-lookup PMTiles.
  * z10 balances detail (polygon accuracy) with tile count.
@@ -128,7 +173,7 @@ export class WorldLookup {
 	 * Returns the first matching city polygon that contains the point,
 	 * or null if no city boundary covers this location.
 	 *
-	 * Results are cached in IndexedDB by coordinate bucket (~11km) to avoid
+	 * Results are cached in IndexedDB by coordinate bucket (~100m) to avoid
 	 * redundant network requests on page reload.
 	 */
 	async query(lat: number, lng: number): Promise<WorldLookupResult | null> {
@@ -155,7 +200,6 @@ export class WorldLookup {
 		if (!tile) return null;
 
 		const { x, y } = latLngToTile(lat, lng, LOOKUP_ZOOM);
-		const testPoint = turfPoint([lng, lat]);
 
 		// Find the "cities" layer in the vector tile
 		const layer = tile.layers["cities"];
@@ -170,7 +214,7 @@ export class WorldLookup {
 				continue;
 			}
 
-			if (booleanPointInPolygon(testPoint, geojson as Feature<Polygon | MultiPolygon>)) {
+			if (pointInGeoJSON(geojson as Feature<Polygon | MultiPolygon>, lng, lat)) {
 				const props = geojson.properties || {};
 				const osmId = props.osm_id;
 				const name = props.name || props["name:en"] || "";
@@ -207,7 +251,6 @@ export class WorldLookup {
 		if (!tile) return null;
 
 		const { x, y } = latLngToTile(lat, lng, zoom);
-		const testPoint = turfPoint([lng, lat]);
 
 		const layer = tile.layers["cities"];
 		if (!layer) return null;
@@ -220,7 +263,7 @@ export class WorldLookup {
 				continue;
 			}
 
-			if (booleanPointInPolygon(testPoint, geojson as Feature<Polygon | MultiPolygon>)) {
+			if (pointInGeoJSON(geojson as Feature<Polygon | MultiPolygon>, lng, lat)) {
 				const props = geojson.properties || {};
 				const osmId = props.osm_id;
 				const name = props.name || props["name:en"] || "";
