@@ -160,6 +160,9 @@ class ExplorationMapApp {
 			onLocationSelect: (center) => {
 				this.map?.jumpTo({ center, zoom: 12 });
 			},
+			onCityJump: (center) => {
+				this.map?.jumpTo({ center, zoom: 12 });
+			},
 		});
 
 		this.controls.setUnits(this.routeLayer?.isImperialUnits?.() ?? false);
@@ -285,7 +288,25 @@ class ExplorationMapApp {
 			this.routeLayer?.setActivities(activities);
 			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
-			const [lat, long] = activities[0].start_latlng as [number, number];
+			let lat: number | undefined;
+			let long: number | undefined;
+
+			for (const activity of activities) {
+				const coords = activity.start_latlng as [number, number] | null | undefined;
+				if (!coords) continue;
+
+				const [candidateLat, candidateLong] = coords;
+				if (!Number.isNaN(candidateLat) && !Number.isNaN(candidateLong)) {
+					lat = candidateLat;
+					long = candidateLong;
+					break;
+				}
+			}
+
+			if (lat === undefined || long === undefined) {
+				throw new Error("No activity with valid location data found");
+			}
+
 			this.map?.jumpTo({ center: [long, lat], zoom: 12 });
 
 			this.cityManager?.discoverCitiesFromActivities(activities);

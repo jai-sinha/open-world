@@ -122,6 +122,17 @@ export class CityStatsComponent {
 		const name = document.createElement("span");
 		name.textContent = city.displayName.split(",")[0];
 		name.style.fontWeight = "500";
+		if (city.center) {
+			name.style.cursor = "pointer";
+			name.title = "Jump to city";
+			name.addEventListener("click", () => {
+				window.dispatchEvent(
+					new CustomEvent("city-jump", {
+						detail: { lat: city.center!.lat, lng: city.center!.lng },
+					}),
+				);
+			});
+		}
 
 		const pct = document.createElement("span");
 		pct.textContent = `${city.percentage.toFixed(1)}%`;

@@ -20,6 +20,7 @@ export interface CityStats {
 	visitedCount: number;
 	percentage: number;
 	source: "self-hosted" | "nominatim";
+	center?: { lat: number; lng: number };
 }
 
 // Worker Message Types (Internal)

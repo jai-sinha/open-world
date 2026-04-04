@@ -20,6 +20,7 @@ export interface ControlsOptions {
 		colorByType?: boolean;
 	}) => void;
 	onLocationSelect?: (center: [number, number]) => void;
+	onCityJump?: (center: [number, number]) => void;
 }
 
 export class Controls {
@@ -40,6 +41,7 @@ export class Controls {
 	private onCityDiscoveryProgress: (e: Event) => void;
 	private onCityDiscoveryComplete: (e: Event) => void;
 	private onCityStatsUpdate: (e: Event) => void;
+	private onCityJump: (e: Event) => void;
 
 	constructor(element: HTMLElement, options: ControlsOptions) {
 		this.container = element;
@@ -83,6 +85,10 @@ export class Controls {
 			const { stats } = (e as CustomEvent<{ stats: any[] }>).detail;
 			if (stats) this.cityStats.setStats(stats, false);
 		};
+		this.onCityJump = (e: Event) => {
+			const { lat, lng } = (e as CustomEvent<{ lat: number; lng: number }>).detail;
+			this.options.onCityJump?.([lng, lat]);
+		};
 
 		this.render();
 		this.registerCityDiscoveryListeners();
@@ -103,6 +109,7 @@ export class Controls {
 		window.addEventListener("city-discovery-progress", this.onCityDiscoveryProgress);
 		window.addEventListener("city-discovery-complete", this.onCityDiscoveryComplete);
 		window.addEventListener("city-stats-update", this.onCityStatsUpdate);
+		window.addEventListener("city-jump", this.onCityJump);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -178,6 +185,7 @@ export class Controls {
 		window.removeEventListener("city-discovery-progress", this.onCityDiscoveryProgress);
 		window.removeEventListener("city-discovery-complete", this.onCityDiscoveryComplete);
 		window.removeEventListener("city-stats-update", this.onCityStatsUpdate);
+		window.removeEventListener("city-jump", this.onCityJump);
 		this.container.innerHTML = "";
 	}
 }
