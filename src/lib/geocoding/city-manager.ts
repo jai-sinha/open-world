@@ -1,5 +1,5 @@
-
 import type { Feature, Polygon, MultiPolygon } from "geojson";
+import type { StravaActivity } from "../../types";
 
 // Export interfaces used by other modules (e.g. stats.ts)
 export interface City {

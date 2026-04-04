@@ -197,13 +197,7 @@ class ExplorationMapApp {
 
 			this.cityManager?.updateVisitedCells(this.visitedCells);
 			if (this.allActivities.length > 0) {
-				this.cityManager
-					?.discoverCitiesFromActivities(this.allActivities, (percentage) => {
-						this.controls?.showCityProcessing(percentage);
-					})
-					.then((stats) => {
-						this.controls?.updateCityStats(stats);
-					});
+				this.cityManager?.discoverCitiesFromActivities(this.allActivities);
 			}
 
 			// Request initial render
@@ -282,23 +276,16 @@ class ExplorationMapApp {
 			this.controls?.showMessage("Fetching activities...", "info");
 
 			const activities = await this.stravaClient.fetchAllActivities((count) => {
-				this.controls?.updateProgress(count, count, `Fetching... ${count}`);
+				this.controls?.reportProgress(count, count, `Fetching... ${count}`);
 			});
 
 			this.controls?.showMessage(`Fetched ${activities.length} activities`, "success");
-			this.controls?.showProgress(false);
 
 			this.allActivities = activities;
 			this.routeLayer?.setActivities(activities);
 			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
-			this.cityManager
-				?.discoverCitiesFromActivities(activities, (percentage) => {
-					this.controls?.showCityProcessing(percentage);
-				})
-				.then((stats) => {
-					this.controls?.updateCityStats(stats);
-				});
+			this.cityManager?.discoverCitiesFromActivities(activities);
 
 			// Sync worker with full list
 			this.sendWorkerMessage({ type: "init", data: { activities } });
@@ -312,7 +299,6 @@ class ExplorationMapApp {
 			}
 
 			this.controls?.showMessage(`Processing ${newActivities.length} new activities...`, "info");
-			this.controls?.showProgress(true);
 
 			this.sendWorkerMessage({
 				type: "process",
@@ -336,7 +322,7 @@ class ExplorationMapApp {
 			case "progress":
 				if (data?.message) this.controls?.showMessage(data.message, "info");
 				if (progress !== undefined && total !== undefined) {
-					this.controls?.updateProgress(progress, total);
+					this.controls?.reportProgress(progress, total);
 				}
 
 				// Handle config updates requiring reprocessing
@@ -352,7 +338,6 @@ class ExplorationMapApp {
 						}
 					} else if (!data.queued) {
 						this.setProcessingState(true);
-						this.controls?.showProgress(true);
 						this.controls?.showMessage("Reprocessing...", "info");
 					}
 				}
@@ -362,11 +347,10 @@ class ExplorationMapApp {
 				if (data) {
 					if (data.reprocessing) {
 						this.setProcessingState(true);
-						this.controls?.showProgress(true);
 					}
 					this.updateMapAndState(data);
 					if (progress !== undefined && total !== undefined) {
-						this.controls?.updateProgress(progress, total);
+						this.controls?.reportProgress(progress, total);
 					}
 					this.saveStatePeriodically();
 				}
@@ -390,9 +374,6 @@ class ExplorationMapApp {
 		if (data.visitedCells) {
 			this.visitedCells = new Set<number>(data.visitedCells);
 			this.cityManager?.updateVisitedCells(this.visitedCells);
-			if (this.cityManager) {
-				this.controls?.updateCityStats(this.cityManager.getStats());
-			}
 		}
 		if (data.processedActivityIds) this.processedActivityIds = new Set(data.processedActivityIds);
 		if (data.rectangles && this.explorationLayer) {
@@ -437,7 +418,11 @@ class ExplorationMapApp {
 
 	private setProcessingState(isProcessing: boolean): void {
 		this.isProcessing = isProcessing;
-		this.controls?.setProcessing(isProcessing);
+		if (isProcessing) {
+			this.controls?.beginProcessing();
+		} else {
+			this.controls?.endProcessing();
+		}
 	}
 
 	private sendWorkerMessage(message: WorkerMessage): void {
@@ -474,11 +459,7 @@ class ExplorationMapApp {
 				this.tilesBaseUrl,
 			);
 			if (this.allActivities.length > 0) {
-				this.cityManager
-					.discoverCitiesFromActivities(this.allActivities, (percentage) =>
-						this.controls?.showCityProcessing(percentage),
-					)
-					.then((stats) => this.controls?.updateCityStats(stats));
+				this.cityManager.discoverCitiesFromActivities(this.allActivities);
 			}
 		}
 		this.sendWorkerMessage({ type: "updateConfig", data: this.currentConfig });
@@ -492,7 +473,7 @@ class ExplorationMapApp {
 				this.currentConfig,
 				this.allActivities,
 			);
-			} catch (error) {
+		} catch (error) {
 			console.error("Failed to save state:", error);
 		}
 	}

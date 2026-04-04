@@ -16,6 +16,7 @@ export class RouteControlsComponent {
 	private legendContainer: HTMLElement;
 	private legendList: HTMLElement;
 	private options: RouteControlsOptions;
+	private routeVisible = true;
 
 	constructor(options: RouteControlsOptions) {
 		this.options = options;
@@ -39,22 +40,18 @@ export class RouteControlsComponent {
 		togglesRow.style.gap = "1em";
 		togglesRow.style.alignItems = "center";
 
-		const visibilityToggle = createCheckbox(
-			"route-visible",
-			"Show Routes",
-			true,
-			(checked) => {
-				this.options.onRouteToggle?.(checked);
-				if (this.legendContainer) {
-					if (checked) {
-						this.legendContainer.style.display =
-							this.legendList && this.legendList.childElementCount ? "" : "none";
-					} else {
-						this.legendContainer.style.display = "none";
-					}
+		const visibilityToggle = createCheckbox("route-visible", "Show Routes", true, (checked) => {
+			this.routeVisible = checked;
+			this.options.onRouteToggle?.(checked);
+			if (this.legendContainer) {
+				if (checked) {
+					this.legendContainer.style.display =
+						this.legendList && this.legendList.childElementCount ? "" : "none";
+				} else {
+					this.legendContainer.style.display = "none";
 				}
-			},
-		);
+			}
+		});
 		togglesRow.appendChild(visibilityToggle);
 
 		const unitsToggle = createCheckbox("route-imperial", "Imperial Units", false, (checked) =>
@@ -64,14 +61,8 @@ export class RouteControlsComponent {
 
 		content.appendChild(togglesRow);
 
-		const widthControl = createRangeControl(
-			"route-width",
-			"Line Width:",
-			1,
-			5,
-			4.5,
-			0.5,
-			(value) => this.options.onRouteStyleChange?.({ lineWidth: value }),
+		const widthControl = createRangeControl("route-width", "Line Width:", 1, 5, 4.5, 0.5, (value) =>
+			this.options.onRouteStyleChange?.({ lineWidth: value }),
 		);
 		content.appendChild(widthControl);
 
@@ -137,9 +128,7 @@ export class RouteControlsComponent {
 		}
 
 		// Show container only if the routes overlay is visible
-		const routesVisible =
-			(document.getElementById("route-visible") as HTMLInputElement | null)?.checked ?? true;
-		this.legendContainer.style.display = routesVisible ? "" : "none";
+		this.legendContainer.style.display = this.routeVisible ? "" : "none";
 
 		const addItem = (type: string, color: string) => {
 			const item = document.createElement("div");

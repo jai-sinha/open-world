@@ -2,14 +2,14 @@ import type { CityStats } from "../../lib/geocoding/city-manager";
 
 export class CityStatsComponent {
 	public element: HTMLElement;
+
 	private progressContainer: HTMLElement;
+	private progressText: HTMLElement;
+	private progressBarFill: HTMLElement;
 	private listContainer: HTMLElement;
 
-	// Progress UI elements
-	private processingText?: HTMLElement;
-	private processingBarBg?: HTMLElement;
-	private processingBarFill?: HTMLElement;
-	private isProcessing = false;
+	private isDiscovering = false;
+	private hasStats = false;
 
 	constructor() {
 		this.element = document.createElement("div");
@@ -23,78 +23,70 @@ export class CityStatsComponent {
 		content.className = "city-stats";
 		this.element.appendChild(content);
 
+		// Progress bar — always in DOM, shown/hidden via .hidden
 		this.progressContainer = document.createElement("div");
+		this.progressContainer.hidden = true;
+
+		this.progressText = document.createElement("div");
+		this.progressText.className = "city-processing-text";
+
+		const barBg = document.createElement("div");
+		Object.assign(barBg.style, {
+			height: "8px",
+			backgroundColor: "#eee",
+			borderRadius: "4px",
+			overflow: "hidden",
+			marginTop: "6px",
+		});
+
+		this.progressBarFill = document.createElement("div");
+		Object.assign(this.progressBarFill.style, {
+			height: "100%",
+			width: "0%",
+			backgroundColor: "#4CAF50",
+			transition: "width 0.15s linear",
+		});
+
+		barBg.appendChild(this.progressBarFill);
+		this.progressContainer.appendChild(this.progressText);
+		this.progressContainer.appendChild(barBg);
 		content.appendChild(this.progressContainer);
 
 		this.listContainer = document.createElement("div");
 		content.appendChild(this.listContainer);
 	}
 
-	public showProgress(percentage: number): void {
-		// When finished (100%), clear processing flag
+	public reset(): void {
+		this.isDiscovering = false;
+		this.hasStats = false;
+		this.progressContainer.hidden = true;
+		this.progressBarFill.style.width = "0%";
+		this.listContainer.innerHTML = "";
+	}
+
+	public setDiscoveryProgress(percentage: number): void {
 		if (percentage >= 100) {
-			this.isProcessing = false;
-			this.clearProgress();
+			this.isDiscovering = false;
+			this.progressContainer.hidden = true;
 			return;
 		}
 
-		// Starting processing - clear the list container to avoid showing stale "No cities found"
-		if (!this.isProcessing) {
+		if (!this.isDiscovering) {
+			this.isDiscovering = true;
+			this.hasStats = false;
 			this.listContainer.innerHTML = "";
 		}
 
-		this.isProcessing = true;
-
-		// Create the UI if not already present
-		if (!this.processingText || !this.processingBarBg || !this.processingBarFill) {
-			this.progressContainer.innerHTML = "";
-			const text = document.createElement("div");
-			text.className = "city-processing-text";
-			this.processingText = text;
-
-			const barBg = document.createElement("div");
-			barBg.style.height = "8px";
-			barBg.style.backgroundColor = "#eee";
-			barBg.style.borderRadius = "4px";
-			barBg.style.overflow = "hidden";
-			barBg.style.marginTop = "6px";
-
-			const barFill = document.createElement("div");
-			barFill.style.height = "100%";
-			barFill.style.width = "0%";
-			barFill.style.backgroundColor = "#4CAF50";
-			barFill.style.transition = "width 0.15s linear";
-
-			barBg.appendChild(barFill);
-
-			this.processingBarBg = barBg;
-			this.processingBarFill = barFill;
-
-			this.progressContainer.appendChild(this.processingText);
-			this.progressContainer.appendChild(barBg);
-		}
-
-		this.processingText.textContent = `Processing cities: ${percentage.toFixed(0)}%`;
-		if (this.processingBarFill) {
-			this.processingBarFill.style.width = `${percentage}%`;
-		}
+		this.progressContainer.hidden = false;
+		this.progressText.textContent = `Processing cities: ${percentage.toFixed(0)}%`;
+		this.progressBarFill.style.width = `${percentage}%`;
 	}
 
-	public updateStats(stats: any[], forceUpdate = false): void {
-		// Handle discovery sentinel (CityManager may return a progress stat while discovering)
-		if (stats.length === 1 && stats[0].cityId === "processing") {
-			const pct = stats[0].totalCells > 0 ? (stats[0].visitedCount / stats[0].totalCells) * 100 : 0;
-			this.showProgress(pct);
-			return;
-		}
+	public setStats(cities: CityStats[], isFinal = false): void {
+		if (this.isDiscovering && !isFinal) return;
 
-		// If processing is active, do not update the list yet unless forced
-		// This prevents partial/incomplete city lists from flashing during processing
-		if (this.isProcessing && !forceUpdate) return;
-
-		if (stats.length === 0) {
-			// Only show "no cities" if we're not processing
-			if (!this.isProcessing) {
+		if (cities.length === 0) {
+			if (!this.isDiscovering && !this.hasStats) {
 				this.listContainer.innerHTML = '<div class="stat-item">No cities found</div>';
 			}
 			return;
@@ -103,56 +95,58 @@ export class CityStatsComponent {
 		this.listContainer.innerHTML = "";
 		const list = document.createElement("div");
 		list.className = "city-list";
-		list.style.display = "flex";
-		list.style.flexDirection = "column";
-		list.style.gap = "8px";
+		Object.assign(list.style, { display: "flex", flexDirection: "column", gap: "8px" });
 
-		stats.forEach((city: CityStats) => {
-			const item = document.createElement("div");
-			item.className = "city-item";
-			item.style.display = "flex";
-			item.style.flexDirection = "column";
-			item.style.fontSize = "0.9em";
-
-			const header = document.createElement("div");
-			header.style.display = "flex";
-			header.style.justifyContent = "space-between";
-			header.style.marginBottom = "2px";
-
-			const name = document.createElement("span");
-			name.textContent = city.displayName.split(",")[0]; // Just city name
-			name.style.fontWeight = "500";
-
-			const pct = document.createElement("span");
-			pct.textContent = `${city.percentage.toFixed(1)}%`;
-
-			header.appendChild(name);
-			header.appendChild(pct);
-
-			const barBg = document.createElement("div");
-			barBg.style.height = "4px";
-			barBg.style.backgroundColor = "#eee";
-			barBg.style.borderRadius = "2px";
-			barBg.style.overflow = "hidden";
-
-			const barFill = document.createElement("div");
-			barFill.style.height = "100%";
-			barFill.style.width = `${city.percentage}%`;
-			barFill.style.backgroundColor = "#4CAF50";
-
-			barBg.appendChild(barFill);
-			item.appendChild(header);
-			item.appendChild(barBg);
-			list.appendChild(item);
-		});
-
+		cities.forEach((city) => list.appendChild(this.renderCityItem(city)));
 		this.listContainer.appendChild(list);
+		this.hasStats = true;
+
+		if (isFinal) {
+			this.isDiscovering = false;
+			this.progressContainer.hidden = true;
+		}
 	}
 
-	private clearProgress() {
-		this.progressContainer.innerHTML = "";
-		this.processingText = undefined;
-		this.processingBarBg = undefined;
-		this.processingBarFill = undefined;
+	private renderCityItem(city: CityStats): HTMLElement {
+		const item = document.createElement("div");
+		item.className = "city-item";
+		Object.assign(item.style, { display: "flex", flexDirection: "column", fontSize: "0.9em" });
+
+		const header = document.createElement("div");
+		Object.assign(header.style, {
+			display: "flex",
+			justifyContent: "space-between",
+			marginBottom: "2px",
+		});
+
+		const name = document.createElement("span");
+		name.textContent = city.displayName.split(",")[0];
+		name.style.fontWeight = "500";
+
+		const pct = document.createElement("span");
+		pct.textContent = `${city.percentage.toFixed(1)}%`;
+
+		header.appendChild(name);
+		header.appendChild(pct);
+
+		const barBg = document.createElement("div");
+		Object.assign(barBg.style, {
+			height: "4px",
+			backgroundColor: "#eee",
+			borderRadius: "2px",
+			overflow: "hidden",
+		});
+
+		const barFill = document.createElement("div");
+		Object.assign(barFill.style, {
+			height: "100%",
+			width: `${city.percentage}%`,
+			backgroundColor: "#4CAF50",
+		});
+
+		barBg.appendChild(barFill);
+		item.appendChild(header);
+		item.appendChild(barBg);
+		return item;
 	}
 }

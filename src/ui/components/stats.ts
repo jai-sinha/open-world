@@ -1,7 +1,12 @@
 export class StatsComponent {
 	public element: HTMLElement;
-	private statsContainer: HTMLElement;
-	private areaStatEl: HTMLElement | null = null;
+
+	private cellsEl: HTMLElement;
+	private activitiesEl: HTMLElement;
+	private rectanglesEl: HTMLElement;
+	private areaEl: HTMLElement;
+	private viewportEl: HTMLElement;
+
 	private lastAreaKm2 = 0;
 	private imperialUnits = false;
 
@@ -13,39 +18,38 @@ export class StatsComponent {
 		title.textContent = "Statistics";
 		this.element.appendChild(title);
 
-		this.statsContainer = document.createElement("div");
-		this.statsContainer.className = "stats-content";
-		this.statsContainer.innerHTML = `
-      <div class="stat-item">
-        <span class="stat-label">Cells Visited:</span>
-        <span class="stat-value" id="stat-cells">0</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Activities Processed:</span>
-        <span class="stat-value" id="stat-activities">0</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Rectangles:</span>
-        <span class="stat-value" id="stat-rectangles">0</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Total Area Explored:</span>
-        <span class="stat-value" id="stat-area">0 km²</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">Current Window Exploration:</span>
-        <span class="stat-value" id="stat-viewport">0%</span>
-      </div>
-    `;
-		this.element.appendChild(this.statsContainer);
+		const container = document.createElement("div");
+		container.className = "stats-content";
+		this.element.appendChild(container);
 
-		// Keep a reference to the area element so we can update unit formatting
-		this.areaStatEl = this.statsContainer.querySelector("#stat-area") as HTMLElement | null;
+		this.cellsEl = this.addStatRow(container, "Cells Visited:", "0");
+		this.activitiesEl = this.addStatRow(container, "Activities Processed:", "0");
+		this.rectanglesEl = this.addStatRow(container, "Rectangles:", "0");
+		this.areaEl = this.addStatRow(container, "Total Area Explored:", "0 km²");
+		this.viewportEl = this.addStatRow(container, "Current Window Exploration:", "0%");
+	}
+
+	private addStatRow(container: HTMLElement, label: string, initialValue: string): HTMLElement {
+		const row = document.createElement("div");
+		row.className = "stat-item";
+
+		const labelEl = document.createElement("span");
+		labelEl.className = "stat-label";
+		labelEl.textContent = label;
+
+		const valueEl = document.createElement("span");
+		valueEl.className = "stat-value";
+		valueEl.textContent = initialValue;
+
+		row.appendChild(labelEl);
+		row.appendChild(valueEl);
+		container.appendChild(row);
+		return valueEl;
 	}
 
 	public setUnits(imperial: boolean): void {
 		this.imperialUnits = imperial;
-		this.updateAreaDisplay();
+		this.renderArea();
 	}
 
 	public updateStats(stats: {
@@ -55,47 +59,28 @@ export class StatsComponent {
 		area?: number;
 		viewportExplored?: number;
 	}): void {
-		if (stats.cells !== undefined) {
-			const el = this.statsContainer.querySelector("#stat-cells");
-			if (el) el.textContent = stats.cells.toLocaleString();
-		}
-
-		if (stats.activities !== undefined) {
-			const el = this.statsContainer.querySelector("#stat-activities");
-			if (el) el.textContent = stats.activities.toLocaleString();
-		}
-
-		if (stats.rectangles !== undefined) {
-			const el = this.statsContainer.querySelector("#stat-rectangles");
-			if (el) el.textContent = stats.rectangles.toLocaleString();
-		}
+		if (stats.cells !== undefined) this.cellsEl.textContent = stats.cells.toLocaleString();
+		if (stats.activities !== undefined)
+			this.activitiesEl.textContent = stats.activities.toLocaleString();
+		if (stats.rectangles !== undefined)
+			this.rectanglesEl.textContent = stats.rectangles.toLocaleString();
 
 		if (stats.area !== undefined) {
 			this.lastAreaKm2 = stats.area;
-			this.updateAreaDisplay();
+			this.renderArea();
 		}
 
 		if (stats.viewportExplored !== undefined) {
-			const el = this.statsContainer.querySelector("#stat-viewport");
-			if (el) {
-				if (stats.viewportExplored === -1) {
-					el.textContent = "Zoom in!";
-				} else {
-					el.textContent = `${stats.viewportExplored.toFixed(2)}%`;
-				}
-			}
+			this.viewportEl.textContent =
+				stats.viewportExplored === -1 ? "Zoom in!" : `${stats.viewportExplored.toFixed(2)}%`;
 		}
 	}
 
-	private updateAreaDisplay(): void {
-		if (!this.areaStatEl) return;
-
+	private renderArea(): void {
 		if (this.imperialUnits) {
-			// convert km² to mi²
-			const areaMi = this.lastAreaKm2 * 0.3861021585;
-			this.areaStatEl.textContent = `${areaMi.toFixed(2)} mi²`;
+			this.areaEl.textContent = `${(this.lastAreaKm2 * 0.3861021585).toFixed(2)} mi²`;
 		} else {
-			this.areaStatEl.textContent = `${this.lastAreaKm2.toFixed(2)} km²`;
+			this.areaEl.textContent = `${this.lastAreaKm2.toFixed(2)} km²`;
 		}
 	}
 }

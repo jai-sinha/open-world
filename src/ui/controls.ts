@@ -1,5 +1,5 @@
 // UI controls for exploration map
-// Handles progress display, pause/resume, privacy settings, and configuration
+// Handles progress display, privacy settings, stats, and city discovery lifecycle.
 
 import type { ProcessingConfig, PrivacySettings } from "../types";
 import { LocationSearchComponent } from "./components/location-search";
@@ -35,26 +35,23 @@ export class Controls {
 	private privacy: PrivacyComponent;
 	private routeControls: RouteControlsComponent;
 
-	// Event handlers for city discovery events (bound so they can be removed on destroy)
-	private cityDiscoveryStartHandler?: (e: Event) => void;
-	private cityDiscoveryProgressHandler?: (e: Event) => void;
-	private cityDiscoveryCompleteHandler?: (e: Event) => void;
-	private cityStatsUpdateHandler?: (e: Event) => void;
+	// Bound event handlers (kept for cleanup on destroy)
+	private onCityDiscoveryStart: (e: Event) => void;
+	private onCityDiscoveryProgress: (e: Event) => void;
+	private onCityDiscoveryComplete: (e: Event) => void;
+	private onCityStatsUpdate: (e: Event) => void;
 
 	constructor(element: HTMLElement, options: ControlsOptions) {
 		this.container = element;
 		this.options = options;
 
-		// Initialize components
 		this.locationSearch = new LocationSearchComponent({
 			onLocationSelect: (center) => this.options.onLocationSelect?.(center),
 			onMessage: (msg, type) => this.showMessage(msg, type),
 		});
 
 		this.progress = new ProgressComponent();
-
 		this.stats = new StatsComponent();
-
 		this.cityStats = new CityStatsComponent();
 
 		this.privacy = new PrivacyComponent({
@@ -70,8 +67,25 @@ export class Controls {
 			onRouteStyleChange: (style) => this.options.onRouteStyleChange?.(style),
 		});
 
+		// Bind event handlers once so they can be removed on destroy
+		this.onCityDiscoveryStart = () => {
+			this.cityStats.reset();
+		};
+		this.onCityDiscoveryProgress = (e: Event) => {
+			const { percentage } = (e as CustomEvent<{ percentage: number }>).detail;
+			this.cityStats.setDiscoveryProgress(percentage);
+		};
+		this.onCityDiscoveryComplete = (e: Event) => {
+			const { stats } = (e as CustomEvent<{ stats: any[] }>).detail;
+			if (stats) this.cityStats.setStats(stats, true);
+		};
+		this.onCityStatsUpdate = (e: Event) => {
+			const { stats } = (e as CustomEvent<{ stats: any[] }>).detail;
+			if (stats) this.cityStats.setStats(stats, false);
+		};
+
 		this.render();
-		this.setupCityDiscoveryListeners();
+		this.registerCityDiscoveryListeners();
 	}
 
 	private render(): void {
@@ -84,63 +98,42 @@ export class Controls {
 		this.container.appendChild(this.routeControls.element);
 	}
 
-	private setupCityDiscoveryListeners() {
-		if (typeof window !== "undefined") {
-			this.cityDiscoveryStartHandler = () => {
-				this.cityStats.showProgress(0);
-			};
-			this.cityDiscoveryProgressHandler = (e: Event) => {
-				const evt = e as CustomEvent<{ percentage: number }>;
-				this.cityStats.showProgress(evt.detail.percentage);
-			};
-			this.cityDiscoveryCompleteHandler = (e: Event) => {
-				const evt = e as CustomEvent<{ stats: any[] }>;
-				// Force update on completion - processing is done
-				if (evt.detail?.stats) this.cityStats.updateStats(evt.detail.stats, true);
-			};
-			this.cityStatsUpdateHandler = (e: Event) => {
-				const evt = e as CustomEvent<{ stats: any[] }>;
-				// Incremental update - respect processing state (don't force)
-				if (evt.detail?.stats) this.cityStats.updateStats(evt.detail.stats, false);
-			};
-
-			window.addEventListener("city-discovery-start", this.cityDiscoveryStartHandler);
-			window.addEventListener("city-discovery-progress", this.cityDiscoveryProgressHandler);
-			window.addEventListener("city-discovery-complete", this.cityDiscoveryCompleteHandler);
-			window.addEventListener("city-stats-update", this.cityStatsUpdateHandler);
-		}
+	private registerCityDiscoveryListeners(): void {
+		window.addEventListener("city-discovery-start", this.onCityDiscoveryStart);
+		window.addEventListener("city-discovery-progress", this.onCityDiscoveryProgress);
+		window.addEventListener("city-discovery-complete", this.onCityDiscoveryComplete);
+		window.addEventListener("city-stats-update", this.onCityStatsUpdate);
 	}
 
-	/**
-	 * Show progress bar
-	 */
-	showProgress(visible: boolean = true): void {
-		if (visible) {
-			this.progress.show();
-		} else {
-			this.progress.hide();
-		}
+	// ---------------------------------------------------------------------------
+	// Processing lifecycle
+	// ---------------------------------------------------------------------------
+
+	/** Call when a processing run starts. Shows the progress bar. */
+	beginProcessing(): void {
+		this.isProcessing = true;
+		this.progress.show();
 	}
 
-	/**
-	 * Update progress bar
-	 */
-	updateProgress(current: number, total: number, message?: string): void {
+	/** Call when a processing run ends. Hides the progress bar after a short delay. */
+	endProcessing(): void {
+		this.isProcessing = false;
+		setTimeout(() => {
+			if (!this.isProcessing) this.progress.hide();
+		}, 1000);
+	}
+
+	/** Update the progress bar value and label. */
+	reportProgress(current: number, total: number, message?: string): void {
 		const percentage = total > 0 ? (current / total) * 100 : 0;
-		const text = message || `${current} / ${total}`;
+		const text = message ?? `${current} / ${total}`;
 		this.progress.update(percentage, text);
 	}
 
-	/**
-	 * Show city processing progress
-	 */
-	showCityProcessing(percentage: number): void {
-		this.cityStats.showProgress(percentage);
-	}
+	// ---------------------------------------------------------------------------
+	// Stats
+	// ---------------------------------------------------------------------------
 
-	/**
-	 * Update stats display
-	 */
 	updateStats(stats: {
 		cells?: number;
 		activities?: number;
@@ -151,47 +144,18 @@ export class Controls {
 		this.stats.updateStats(stats);
 	}
 
-	/**
-	 * Update city stats list
-	 */
-	updateCityStats(stats: any[]): void {
-		this.cityStats.updateStats(stats);
-	}
-
-	/**
-	 * Set processing state
-	 */
-	setProcessing(processing: boolean): void {
-		this.isProcessing = processing;
-		if (processing) {
-			this.progress.show();
-		} else {
-			// Delay hiding slightly to show 100%
-			setTimeout(() => {
-				if (!this.isProcessing) {
-					this.progress.hide();
-				}
-			}, 1000);
-		}
-	}
-
-	/**
-	 * Toggle units and update displayed units
-	 */
 	setUnits(imperial: boolean): void {
 		this.stats.setUnits(imperial);
 	}
 
-	/**
-	 * Update the route activity types shown in the legend.
-	 */
 	updateRouteActivityTypes(types: string[]): void {
 		this.routeControls.updateActivityTypes(types);
 	}
 
-	/**
-	 * Show message to user
-	 */
+	// ---------------------------------------------------------------------------
+	// Messages
+	// ---------------------------------------------------------------------------
+
 	showMessage(message: string, type: "info" | "success" | "warning" | "error" = "info"): void {
 		const messageEl = document.createElement("div");
 		messageEl.className = `message message-${type}`;
@@ -205,22 +169,15 @@ export class Controls {
 		}, 3000);
 	}
 
-	/**
-	 * Destroy controls
-	 */
-	destroy(): void {
-		// Remove any attached city discovery event listeners
-		if (typeof window !== "undefined") {
-			if (this.cityDiscoveryStartHandler)
-				window.removeEventListener("city-discovery-start", this.cityDiscoveryStartHandler);
-			if (this.cityDiscoveryProgressHandler)
-				window.removeEventListener("city-discovery-progress", this.cityDiscoveryProgressHandler);
-			if (this.cityDiscoveryCompleteHandler)
-				window.removeEventListener("city-discovery-complete", this.cityDiscoveryCompleteHandler);
-			if (this.cityStatsUpdateHandler)
-				window.removeEventListener("city-stats-update", this.cityStatsUpdateHandler);
-		}
+	// ---------------------------------------------------------------------------
+	// Lifecycle
+	// ---------------------------------------------------------------------------
 
+	destroy(): void {
+		window.removeEventListener("city-discovery-start", this.onCityDiscoveryStart);
+		window.removeEventListener("city-discovery-progress", this.onCityDiscoveryProgress);
+		window.removeEventListener("city-discovery-complete", this.onCityDiscoveryComplete);
+		window.removeEventListener("city-stats-update", this.onCityStatsUpdate);
 		this.container.innerHTML = "";
 	}
 }
@@ -230,10 +187,6 @@ export function createControls(
 	options: ControlsOptions = {},
 ): Controls {
 	const element = typeof container === "string" ? document.getElementById(container) : container;
-
-	if (!element) {
-		throw new Error("Container element not found");
-	}
-
+	if (!element) throw new Error("Container element not found");
 	return new Controls(element, options);
 }
