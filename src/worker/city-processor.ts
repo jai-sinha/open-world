@@ -1,5 +1,5 @@
 import type { Feature, Polygon, MultiPolygon } from "geojson";
-import { latLngToMeters, packCell, unpackCell } from "../lib/projection";
+import { latLngToMeters, metersToLatLng, packCell, unpackCell } from "../lib/projection";
 import type { StravaActivity } from "../types";
 import { computeCityStats, computeVisitedPercentageForCells } from "../lib/stats";
 import { getRoadCellsForBbox } from "../lib/tiles";
@@ -245,6 +245,8 @@ interface FlatRing {
 	maxY: number;
 }
 
+type OutlinePolyline = Array<[number, number]>;
+
 // Convert a GeoJSON ring ([lng,lat][] pairs) to a FlatRing in Web Mercator meters,
 // simplified to `tolerance` metres (half a cell — preserves sub-cell correctness).
 function flattenRing(ring: number[][], tolerance: number): FlatRing {
@@ -336,6 +338,20 @@ function flattenBoundary(
 	}
 	return [outerRings, holesPerPoly];
 }
+
+function flatRingToOutlinePolyline(ring: FlatRing): OutlinePolyline {
+	const outline: OutlinePolyline = [];
+	const n = ring.data.length >> 1;
+	for (let i = 0; i < n; i++) {
+		const { lat, lng } = metersToLatLng(ring.data[i * 2], ring.data[i * 2 + 1]);
+		outline.push([lng, lat]);
+	}
+	return outline;
+}
+
+function flatOuterToOutlines(flatOuter: FlatRing[]): OutlinePolyline[] {
+	return flatOuter.map((ring) => flatRingToOutlinePolyline(ring));
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Constants
@@ -349,6 +365,7 @@ export interface City {
 	boundary: Feature<Polygon | MultiPolygon>;
 	flatOuter: FlatRing[]; // pre-flattened outer rings for fast PIP
 	flatHoles: FlatRing[][]; // pre-flattened holes per polygon
+	outline: OutlinePolyline[]; // simplified outer boundary polylines in [lng, lat]
 	roadCells: Set<number> | null; // Road-only cells (async computed)
 	roadTiles: string; // PMTiles filename for road data, e.g. "europe.pmtiles"
 	source: "self-hosted";
@@ -362,6 +379,8 @@ export interface CityStats {
 	visitedCount: number;
 	percentage: number;
 	source: "self-hosted";
+	center?: { lat: number; lng: number };
+	outline?: OutlinePolyline[];
 }
 
 // Worker Message Types
@@ -427,6 +446,9 @@ class CityProcessor {
 	// PMTiles Instance Cache (keyed by full URL)
 	private pmtilesCache = new Map<string, PMTiles>();
 	private tilesBaseUrl = DEFAULT_TILES_BASE_URL;
+
+	// Maps rounded lat/lng location keys to their resolved city IDs (populated during discovery)
+	private locationKeyToCityId = new Map<string, string>();
 
 	// Self-hosted world lookup for reverse geocoding
 	private worldLookup: WorldLookup;
@@ -758,6 +780,7 @@ class CityProcessor {
 
 			// tolerance = cellSize/2 — simplifies polygon to sub-cell precision
 			const [flatOuter, flatHoles] = flattenBoundary(feature, this.cellSize / 2);
+			const outline = flatOuterToOutlines(flatOuter);
 
 			const city: City = {
 				id: lookupResult.osmId,
@@ -767,6 +790,7 @@ class CityProcessor {
 				boundary: feature,
 				flatOuter,
 				flatHoles,
+				outline,
 				roadCells: null,
 				roadTiles: lookupResult.roadTiles,
 				source: "self-hosted",

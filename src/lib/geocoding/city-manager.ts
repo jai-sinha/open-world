@@ -11,6 +11,7 @@ export interface City {
 	roadCells: Set<number> | null; // Road-only cells (async computed)
 	source: "self-hosted" | "nominatim";
 	center?: { lat: number; lng: number }; // Cache center for distance lookups
+	outline?: [number, number][][]; // Simplified outer boundary rings as [lng, lat] polylines
 }
 
 export interface CityStats {
@@ -21,6 +22,7 @@ export interface CityStats {
 	percentage: number;
 	source: "self-hosted" | "nominatim";
 	center?: { lat: number; lng: number };
+	outline?: [number, number][][]; // Simplified outer boundary rings as [lng, lat] polylines
 }
 
 // Worker Message Types (Internal)

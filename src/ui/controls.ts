@@ -20,7 +20,7 @@ export interface ControlsOptions {
 		colorByType?: boolean;
 	}) => void;
 	onLocationSelect?: (center: [number, number]) => void;
-	onCityJump?: (center: [number, number]) => void;
+	onCityJump?: (payload: { center: [number, number]; outline?: [number, number][][] }) => void;
 }
 
 export class Controls {
@@ -86,8 +86,17 @@ export class Controls {
 			if (stats) this.cityStats.setStats(stats, false);
 		};
 		this.onCityJump = (e: Event) => {
-			const { lat, lng } = (e as CustomEvent<{ lat: number; lng: number }>).detail;
-			this.options.onCityJump?.([lng, lat]);
+			const { lat, lng, outline } = (
+				e as CustomEvent<{
+					lat: number;
+					lng: number;
+					outline?: [number, number][][];
+				}>
+			).detail;
+			this.options.onCityJump?.({
+				center: [lng, lat],
+				outline,
+			});
 		};
 
 		this.render();

@@ -47,6 +47,9 @@ class ExplorationMapApp {
 	private routeLayer?: RouteOverlayLayer;
 	private cityManager?: CityManager;
 	private tilesBaseUrl?: string;
+	private cityOutlineSourceId = "city-outline-highlight";
+	private cityOutlineLayerId = "city-outline-highlight-layer";
+	private cityOutlineAnimationFrame?: number;
 
 	// State
 	private visitedCells = new Set<number>();
@@ -129,6 +132,27 @@ class ExplorationMapApp {
 			privacyDistance: this.currentConfig.privacyDistance,
 			onRouteClick: (features) => this.sidebar?.show(features),
 		});
+
+		this.map.addSource(this.cityOutlineSourceId, {
+			type: "geojson",
+			data: { type: "FeatureCollection", features: [] },
+		});
+
+		this.map.addLayer({
+			id: this.cityOutlineLayerId,
+			type: "line",
+			source: this.cityOutlineSourceId,
+			paint: {
+				"line-color": "#000000",
+				"line-width": 4,
+				"line-opacity": 0,
+				"line-dasharray": [3, 2],
+			},
+			layout: {
+				"line-cap": "round",
+				"line-join": "round",
+			},
+		});
 	}
 
 	private initializeWorker(): void {
@@ -160,8 +184,47 @@ class ExplorationMapApp {
 			onLocationSelect: (center) => {
 				this.map?.jumpTo({ center, zoom: 12 });
 			},
-			onCityJump: (center) => {
-				this.map?.jumpTo({ center, zoom: 12 });
+			onCityJump: ({ center, outline }) => {
+				if (this.map && outline && outline.length > 0) {
+					let minLng = Infinity;
+					let minLat = Infinity;
+					let maxLng = -Infinity;
+					let maxLat = -Infinity;
+
+					for (const ring of outline) {
+						for (const [lng, lat] of ring) {
+							if (lng < minLng) minLng = lng;
+							if (lat < minLat) minLat = lat;
+							if (lng > maxLng) maxLng = lng;
+							if (lat > maxLat) maxLat = lat;
+						}
+					}
+
+					if (
+						Number.isFinite(minLng) &&
+						Number.isFinite(minLat) &&
+						Number.isFinite(maxLng) &&
+						Number.isFinite(maxLat)
+					) {
+						this.map.fitBounds(
+							[
+								[minLng, minLat],
+								[maxLng, maxLat],
+							],
+							{
+								padding: 40,
+								maxZoom: 14,
+								duration: 600,
+							},
+						);
+					} else {
+						this.map.jumpTo({ center, zoom: 12 });
+					}
+
+					this.flashCityOutline(outline);
+				} else {
+					this.map?.jumpTo({ center, zoom: 12 });
+				}
 			},
 		});
 
@@ -213,6 +276,66 @@ class ExplorationMapApp {
 		} catch (error) {
 			console.error("Failed to load saved state:", error);
 		}
+	}
+
+	private flashCityOutline(outline: [number, number][][]): void {
+		if (!this.map) return;
+
+		if (this.cityOutlineAnimationFrame) {
+			cancelAnimationFrame(this.cityOutlineAnimationFrame);
+			this.cityOutlineAnimationFrame = undefined;
+		}
+
+		const source = this.map.getSource(this.cityOutlineSourceId) as
+			| maplibregl.GeoJSONSource
+			| undefined;
+		if (!source) return;
+
+		source.setData({
+			type: "FeatureCollection",
+			features: [
+				{
+					type: "Feature",
+					properties: {},
+					geometry: {
+						type: "MultiLineString",
+						coordinates: outline,
+					},
+				},
+			],
+		});
+
+		const fadeInMs = 150;
+		const holdMs = 1500;
+		const fadeOutMs = 250;
+		const maxOpacity = 0.75;
+		const start = performance.now();
+
+		const animate = (now: number) => {
+			if (!this.map) return;
+
+			const elapsed = now - start;
+			let opacity = 0;
+
+			if (elapsed <= fadeInMs) {
+				opacity = (elapsed / fadeInMs) * maxOpacity;
+			} else if (elapsed <= fadeInMs + holdMs) {
+				opacity = maxOpacity;
+			} else if (elapsed <= fadeInMs + holdMs + fadeOutMs) {
+				const fadeOutElapsed = elapsed - fadeInMs - holdMs;
+				opacity = maxOpacity * (1 - fadeOutElapsed / fadeOutMs);
+			} else {
+				this.map.setPaintProperty(this.cityOutlineLayerId, "line-opacity", 0);
+				source.setData({ type: "FeatureCollection", features: [] });
+				this.cityOutlineAnimationFrame = undefined;
+				return;
+			}
+
+			this.map.setPaintProperty(this.cityOutlineLayerId, "line-opacity", opacity);
+			this.cityOutlineAnimationFrame = requestAnimationFrame(animate);
+		};
+
+		this.cityOutlineAnimationFrame = requestAnimationFrame(animate);
 	}
 
 	private async handleAuthCallback(): Promise<void> {
@@ -526,6 +649,11 @@ class ExplorationMapApp {
 
 		this.cityManager?.terminate();
 		this.cityManager = undefined;
+
+		if (this.cityOutlineAnimationFrame) {
+			cancelAnimationFrame(this.cityOutlineAnimationFrame);
+			this.cityOutlineAnimationFrame = undefined;
+		}
 
 		this.routeLayer?.remove();
 		this.routeLayer = undefined;

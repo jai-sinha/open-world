@@ -128,7 +128,11 @@ export class CityStatsComponent {
 			name.addEventListener("click", () => {
 				window.dispatchEvent(
 					new CustomEvent("city-jump", {
-						detail: { lat: city.center!.lat, lng: city.center!.lng },
+						detail: {
+							lat: city.center!.lat,
+							lng: city.center!.lng,
+							outline: city.outline,
+						},
 					}),
 				);
 			});
