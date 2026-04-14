@@ -181,6 +181,8 @@ class ExplorationMapApp {
 				this.sidebar?.setUnits(imp);
 			},
 			onRouteStyleChange: (s) => this.routeLayer?.setStyle(s),
+			onFromDateChange: (fromDate) => this.routeLayer?.setFromDate(fromDate),
+			onToDateChange: (toDate) => this.routeLayer?.setToDate(toDate),
 			onLocationSelect: (center) => {
 				this.map?.jumpTo({ center, zoom: 12 });
 			},
@@ -248,6 +250,7 @@ class ExplorationMapApp {
 			this.routeLayer?.setActivities(state.activities);
 			this.routeLayer?.setStyle({ showPrivate: !this.currentConfig.skipPrivate });
 			this.routeLayer?.setPrivacyDistance(this.currentConfig.privacyDistance);
+			this.controls?.updateRouteActivities(state.activities);
 			this.controls?.updateRouteActivityTypes(state.activities.map((a) => a.type));
 
 			// Sync worker
@@ -409,6 +412,7 @@ class ExplorationMapApp {
 
 			this.allActivities = activities;
 			this.routeLayer?.setActivities(activities);
+			this.controls?.updateRouteActivities(activities);
 			this.controls?.updateRouteActivityTypes(activities.map((a) => a.type));
 
 			let lat: number | undefined;

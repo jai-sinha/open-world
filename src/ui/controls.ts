@@ -19,6 +19,8 @@ export interface ControlsOptions {
 		lineOpacity?: number;
 		colorByType?: boolean;
 	}) => void;
+	onToDateChange?: (toDate: Date | null) => void;
+	onFromDateChange?: (fromDate: Date | null) => void;
 	onLocationSelect?: (center: [number, number]) => void;
 	onCityJump?: (payload: { center: [number, number]; outline?: [number, number][][] }) => void;
 }
@@ -67,6 +69,9 @@ export class Controls {
 				this.stats.setUnits(imperial);
 			},
 			onRouteStyleChange: (style) => this.options.onRouteStyleChange?.(style),
+			onToDateChange: (toDate) => this.options.onToDateChange?.(toDate),
+			onFromDateChange: (fromDate) => this.options.onFromDateChange?.(fromDate),
+			activities: [],
 		});
 
 		// Bind event handlers once so they can be removed on destroy
@@ -166,6 +171,10 @@ export class Controls {
 
 	updateRouteActivityTypes(types: string[]): void {
 		this.routeControls.updateActivityTypes(types);
+	}
+
+	updateRouteActivities(activities: Array<{ start_date_local: string }>): void {
+		this.routeControls.updateActivities(activities);
 	}
 
 	// ---------------------------------------------------------------------------

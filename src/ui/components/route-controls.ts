@@ -9,6 +9,9 @@ export interface RouteControlsOptions {
 		lineOpacity?: number;
 		colorByType?: boolean;
 	}) => void;
+	onFromDateChange?: (fromDate: Date | null) => void;
+	onToDateChange?: (toDate: Date | null) => void;
+	activities?: Array<{ start_date_local: string }>;
 }
 
 export class RouteControlsComponent {
@@ -17,6 +20,16 @@ export class RouteControlsComponent {
 	private legendList: HTMLElement;
 	private options: RouteControlsOptions;
 	private routeVisible = true;
+
+	private dateRangeContainer: HTMLElement;
+	private dateRangeSummary: HTMLElement;
+	private sliderTrack: HTMLElement;
+	private sliderRange: HTMLElement;
+	private fromHandle: HTMLElement;
+	private toHandle: HTMLElement;
+	private activityDates: Date[] = [];
+	private fromIndex = 0;
+	private toIndex = 0;
 
 	constructor(options: RouteControlsOptions) {
 		this.options = options;
@@ -77,7 +90,44 @@ export class RouteControlsComponent {
 		);
 		content.appendChild(opacityControl);
 
-		// Activity color legend (shows only activity types present)
+		this.dateRangeContainer = document.createElement("div");
+		this.dateRangeContainer.className = "control-group range-group route-date-range";
+		this.dateRangeContainer.style.display = "none";
+
+		const dateRangeLabel = document.createElement("label");
+		dateRangeLabel.textContent = "Activity Date Range:";
+		this.dateRangeContainer.appendChild(dateRangeLabel);
+
+		this.dateRangeSummary = document.createElement("span");
+		this.dateRangeSummary.className = "value-display";
+		dateRangeLabel.appendChild(this.dateRangeSummary);
+
+		const sliderWrap = document.createElement("div");
+		sliderWrap.className = "range-slider-wrap route-date-range-slider";
+
+		this.sliderTrack = document.createElement("div");
+		this.sliderTrack.className = "range-slider-track";
+		sliderWrap.appendChild(this.sliderTrack);
+
+		this.sliderRange = document.createElement("div");
+		this.sliderRange.className = "range-slider-fill";
+		this.sliderTrack.appendChild(this.sliderRange);
+
+		this.fromHandle = this.createHandle();
+		this.toHandle = this.createHandle();
+
+		this.sliderTrack.appendChild(this.fromHandle);
+		this.sliderTrack.appendChild(this.toHandle);
+
+		this.fromHandle.addEventListener("pointerdown", (event) => this.startDrag(event, "from"));
+		this.toHandle.addEventListener("pointerdown", (event) => this.startDrag(event, "to"));
+		this.sliderTrack.addEventListener("pointerdown", (event) => this.handleTrackPointerDown(event));
+
+		this.dateRangeContainer.appendChild(sliderWrap);
+		content.appendChild(this.dateRangeContainer);
+
+		this.updateActivities(this.options.activities ?? []);
+
 		this.legendContainer = document.createElement("div");
 		this.legendContainer.className = "control-group route-legend";
 		this.legendContainer.style.display = "none";
@@ -99,6 +149,117 @@ export class RouteControlsComponent {
 		this.element.appendChild(content);
 	}
 
+	public updateActivities(activities: Array<{ start_date_local: string }>): void {
+		this.activityDates = activities
+			.map((activity) => new Date(activity.start_date_local))
+			.filter((date) => !Number.isNaN(date.getTime()))
+			.sort((a, b) => a.getTime() - b.getTime());
+
+		if (this.activityDates.length === 0) {
+			this.dateRangeContainer.style.display = "none";
+			this.dateRangeSummary.textContent = "";
+			this.options.onFromDateChange?.(null);
+			this.options.onToDateChange?.(null);
+			return;
+		}
+
+		this.fromIndex = 0;
+		this.toIndex = this.activityDates.length - 1;
+		this.dateRangeContainer.style.display = "";
+		this.syncDateRangeUI();
+	}
+
+	private createHandle(): HTMLElement {
+		const handle = document.createElement("div");
+		handle.className = "range-slider-thumb";
+		return handle;
+	}
+
+	private startDrag(event: PointerEvent, handle: "from" | "to"): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const onPointerMove = (moveEvent: PointerEvent) => {
+			this.updateHandleFromPointer(moveEvent.clientX, handle);
+		};
+
+		const onPointerUp = () => {
+			window.removeEventListener("pointermove", onPointerMove);
+			window.removeEventListener("pointerup", onPointerUp);
+		};
+
+		window.addEventListener("pointermove", onPointerMove);
+		window.addEventListener("pointerup", onPointerUp);
+	}
+
+	private handleTrackPointerDown(event: PointerEvent): void {
+		if (this.activityDates.length === 0) return;
+
+		const rect = this.sliderTrack.getBoundingClientRect();
+		const ratio = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0;
+		const clampedRatio = Math.max(0, Math.min(1, ratio));
+		const maxIndex = Math.max(1, this.activityDates.length - 1);
+		const targetIndex = Math.round(clampedRatio * maxIndex);
+
+		const fromDistance = Math.abs(targetIndex - this.fromIndex);
+		const toDistance = Math.abs(targetIndex - this.toIndex);
+		const handle = fromDistance <= toDistance ? "from" : "to";
+
+		this.updateHandleFromPointer(event.clientX, handle);
+		this.startDrag(event, handle);
+	}
+
+	private updateHandleFromPointer(clientX: number, handle: "from" | "to"): void {
+		if (this.activityDates.length === 0) return;
+
+		const rect = this.sliderTrack.getBoundingClientRect();
+		if (rect.width <= 0) return;
+
+		const ratio = (clientX - rect.left) / rect.width;
+		const clampedRatio = Math.max(0, Math.min(1, ratio));
+		const maxIndex = Math.max(1, this.activityDates.length - 1);
+		const nextIndex = Math.round(clampedRatio * maxIndex);
+
+		if (handle === "from") {
+			this.fromIndex = Math.min(nextIndex, this.toIndex);
+		} else {
+			this.toIndex = Math.max(nextIndex, this.fromIndex);
+		}
+
+		this.syncDateRangeUI();
+	}
+
+	private syncDateRangeUI(): void {
+		if (this.activityDates.length === 0) return;
+
+		const maxIndex = Math.max(1, this.activityDates.length - 1);
+		const fromDate = this.startOfDay(this.activityDates[this.fromIndex]);
+		const toDate = this.endOfDay(this.activityDates[this.toIndex]);
+
+		// slightly inset handle so it's aligned w above items
+		const r = 9; // handle radius (px), half of 18px handle width
+		const fromFrac = this.fromIndex / maxIndex;
+		const toFrac = this.toIndex / maxIndex;
+		const pos = (frac: number) => `calc(${r}px + ${frac} * (100% - ${r * 2}px))`;
+
+		this.fromHandle.style.left = pos(fromFrac);
+		this.toHandle.style.left = pos(toFrac);
+		this.sliderRange.style.left = pos(fromFrac);
+		this.sliderRange.style.width = `calc(${toFrac - fromFrac} * (100% - ${r * 2}px))`;
+
+		this.dateRangeSummary.textContent = `${fromDate.toLocaleDateString()} – ${toDate.toLocaleDateString()}`;
+		this.options.onFromDateChange?.(fromDate);
+		this.options.onToDateChange?.(toDate);
+	}
+
+	private startOfDay(date: Date): Date {
+		return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+	}
+
+	private endOfDay(date: Date): Date {
+		return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+	}
+
 	/**
 	 * Update the route activity types shown in the legend.
 	 * Pass an array of activity type strings (e.g. ['Run', 'Ride']).
@@ -109,25 +270,20 @@ export class RouteControlsComponent {
 
 		const provided = new Set(types || []);
 
-		// Keep known types in the defined order, only those present
 		const knownOrder = Object.keys(ACTIVITY_COLORS).filter((k) => k !== "default");
 		const presentKnown = knownOrder.filter((k) => provided.has(k));
 
-		// Any unknown types should be shown with default color
 		const unknowns = Array.from(provided).filter(
 			(t) => !Object.prototype.hasOwnProperty.call(ACTIVITY_COLORS, t),
 		);
 
-		// Clear existing items
 		this.legendList.innerHTML = "";
 
 		if (presentKnown.length === 0 && unknowns.length === 0) {
-			// Nothing to show
 			this.legendContainer.style.display = "none";
 			return;
 		}
 
-		// Show container only if the routes overlay is visible
 		this.legendContainer.style.display = this.routeVisible ? "" : "none";
 
 		const addItem = (type: string, color: string) => {

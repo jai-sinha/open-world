@@ -288,8 +288,12 @@
 				align-items: center;
 			}
 
-			.range-group label {
+			.range-group label,
+			.route-date-range label {
 				grid-column: 1 / -1;
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
 			}
 
 			.range-group input[type="range"] {
@@ -310,7 +314,7 @@
 				height: 6px;
 				background: var(--bg-light);
 				outline: none;
-				border-radius: 3px;
+				border-radius: 999px;
 			}
 
 			input[type="range"]::-webkit-slider-thumb {
@@ -330,6 +334,43 @@
 				cursor: pointer;
 				border-radius: 50%;
 				border: none;
+			}
+
+			.range-slider-wrap {
+				position: relative;
+				padding: 10px 0;
+			}
+
+			.range-slider-track {
+				position: relative;
+				height: 6px;
+				background: var(--bg-light);
+				border-radius: 999px;
+				cursor: pointer;
+			}
+
+			.range-slider-fill {
+				position: absolute;
+				top: 0;
+				height: 100%;
+				background: var(--primary-color);
+				border-radius: inherit;
+				pointer-events: none;
+			}
+
+			.range-slider-thumb {
+				position: absolute;
+				top: 50%;
+				width: 18px;
+				height: 18px;
+				border-radius: 50%;
+				background: var(--primary-color);
+				transform: translate(-50%, -50%);
+				cursor: pointer;
+				box-sizing: border-box;
+				touch-action: none;
+				-webkit-user-select: none;
+				user-select: none;
 			}
 
 			.route-section {

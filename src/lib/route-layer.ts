@@ -13,10 +13,15 @@ export interface RouteLayerOptions {
 	imperialUnits?: boolean;
 	privacyDistance?: number;
 	onRouteClick?: (features: any[]) => void;
+	fromDate?: Date;
+	toDate?: Date;
 }
 
-type InternalRouteLayerOptions = Required<Omit<RouteLayerOptions, "onRouteClick">> &
-	Pick<RouteLayerOptions, "onRouteClick">;
+type InternalRouteLayerOptions = Omit<
+	Required<Omit<RouteLayerOptions, "onRouteClick" | "fromDate" | "toDate">>,
+	never
+> &
+	Pick<RouteLayerOptions, "onRouteClick" | "fromDate" | "toDate">;
 
 export const ACTIVITY_COLORS: Record<string, string> = {
 	Run: "#E53935",
@@ -47,6 +52,8 @@ export class RouteOverlayLayer {
 			showPrivate: true,
 			imperialUnits: false,
 			privacyDistance: 0,
+			fromDate: undefined,
+			toDate: undefined,
 			...options,
 		};
 		this.initialize();
@@ -159,6 +166,11 @@ export class RouteOverlayLayer {
 	};
 
 	private activityToFeature(activity: StravaActivity) {
+		if (this.options.fromDate && new Date(activity.start_date_local) < this.options.fromDate)
+			return null;
+		if (this.options.toDate && new Date(activity.start_date_local) > this.options.toDate)
+			return null;
+
 		const encoded = activity.map?.summary_polyline || activity.map?.polyline;
 		if (!encoded) return null;
 
@@ -210,6 +222,16 @@ export class RouteOverlayLayer {
 			type: "FeatureCollection",
 			features: features as any,
 		});
+	}
+
+	setFromDate(date: Date | null): void {
+		this.options.fromDate = date ?? undefined;
+		this.updateSource(this.activities);
+	}
+
+	setToDate(date: Date | null): void {
+		this.options.toDate = date ?? undefined;
+		this.updateSource(this.activities);
 	}
 
 	setActivities(activities: StravaActivity[]): void {
