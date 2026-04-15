@@ -3,7 +3,7 @@ import { Card, Form, InputGroup, Button, Spinner } from "react-bootstrap";
 import { useApp } from "@/app/AppContext";
 
 export default function LocationSearch() {
-	const { jumpToLocation, showMessage } = useApp();
+	const { jumpToLocation } = useApp();
 	const [query, setQuery] = useState("");
 	const [searching, setSearching] = useState(false);
 
@@ -18,14 +18,12 @@ export default function LocationSearch() {
 			const data = await res.json();
 
 			if (!Array.isArray(data) || data.length === 0) {
-				showMessage("Location not found", "error");
 				return;
 			}
 
 			const { lon, lat } = data[0];
 			jumpToLocation([parseFloat(lon), parseFloat(lat)]);
 		} catch {
-			showMessage("Location not found", "error");
 		} finally {
 			setSearching(false);
 		}

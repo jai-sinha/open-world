@@ -17,23 +17,20 @@ import type {
 	PrivacySettings,
 } from "@/types";
 import { createStravaClient, StravaClient } from "@/lib/strava";
-import { loadState, saveState, clearState } from "@/lib/storage";
+import { saveState, clearState } from "@/lib/storage";
 import { createExplorationLayer, ExplorationCanvasLayer } from "@/lib/canvas-layer";
 import { createRouteOverlay, RouteOverlayLayer, type RouteClickFeature } from "@/lib/route-layer";
 import { CityManager, type CityStats } from "@/lib/geocoding/city-manager";
 import { setRoadPMTilesURL } from "@/lib/tiles";
+import {
+	getLatestActivityCenter,
+	type HydratedMapState,
+	type MapViewState,
+} from "@/features/map/map-state";
 
 // ────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────
-
-export type MessageType = "info" | "success" | "warning" | "error";
-
-export interface AppMessage {
-	id: string;
-	text: string;
-	type: MessageType;
-}
 
 export interface ProgressInfo {
 	current: number;
@@ -92,13 +89,12 @@ interface AppContextValue {
 	stats: StatsInfo;
 	cityStats: CityStats[];
 	cityDiscoveryProgress: number;
-	messages: AppMessage[];
 	selectedActivities: RouteClickFeature[];
 	sidebarOpen: boolean;
 
 	/* ─── actions ─── */
 	initialize: () => Promise<void>;
-	onMapReady: (map: MapLibreMap) => void;
+	onMapReady: (map: MapLibreMap, hydratedState: HydratedMapState | null) => void;
 	authorize: () => void;
 	logout: () => void;
 	fetchAndProcessActivities: () => Promise<void>;
@@ -109,7 +105,6 @@ interface AppContextValue {
 	setRouteStyle: (style: RouteStyleOptions) => void;
 	setFromDate: (date: Date | null) => void;
 	setToDate: (date: Date | null) => void;
-	showMessage: (text: string, type: MessageType) => void;
 	openSidebar: (activities: RouteClickFeature[]) => void;
 	closeSidebar: () => void;
 	jumpToLocation: (center: [number, number]) => void;
@@ -154,7 +149,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	});
 	const [cityStats, setCityStats] = useState<CityStats[]>([]);
 	const [cityDiscoveryProgress, setCityDiscoveryProgress] = useState(0);
-	const [messages, setMessages] = useState<AppMessage[]>([]);
 	const [selectedActivities, setSelectedActivities] = useState<RouteClickFeature[]>([]);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -197,14 +191,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// ──────────────────────────────────────────────────────────
 	// Helpers
 	// ──────────────────────────────────────────────────────────
-
-	const addMessage = useCallback((text: string, type: MessageType) => {
-		const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-		setMessages((prev) => [...prev.slice(-4), { id, text, type }]);
-		window.setTimeout(() => {
-			setMessages((prev) => prev.filter((m) => m.id !== id));
-		}, 3000);
-	}, []);
 
 	const sendWorkerMessage = useCallback((message: WorkerMessage) => {
 		workerRef.current?.postMessage(message);
@@ -318,7 +304,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 			switch (type) {
 				case "progress":
-					if (data?.message) addMessage(data.message, "info");
 					if (prog !== undefined && total !== undefined) {
 						setProgress({ current: prog, total, message: data?.message });
 					}
@@ -327,7 +312,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 					if (data?.configUpdated && data?.needsReprocess) {
 						if (data.noActivities) {
 							if (allActivitiesRef.current.length > 0) {
-								addMessage("Seeding worker for reprocess...", "info");
 								sendWorkerMessage({
 									type: "init",
 									data: { activities: allActivitiesRef.current },
@@ -336,12 +320,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 									type: "updateConfig",
 									data: configRef.current,
 								});
-							} else {
-								addMessage("No activities to reprocess. Fetch first.", "warning");
 							}
 						} else if (!data.queued) {
 							setIsProcessing(true);
-							addMessage("Reprocessing...", "info");
 						}
 					}
 					break;
@@ -363,18 +344,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 					setIsProcessing(false);
 					setProgress(null);
 					if (data) updateMapAndState(data);
-					addMessage("Processing complete!", "success");
 					saveCurrentState();
 					break;
 
 				case "error":
 					setIsProcessing(false);
 					setProgress(null);
-					addMessage(`Error: ${data?.message}`, "error");
 					break;
 			}
 		},
-		[addMessage, updateMapAndState, saveStatePeriodically, saveCurrentState, sendWorkerMessage],
+		[updateMapAndState, saveStatePeriodically, saveCurrentState, sendWorkerMessage],
 	);
 
 	// Keep handleWorkerMessage ref in sync so the worker's onmessage
@@ -493,13 +472,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			updateAuthUI();
 		} catch (error) {
 			console.error("Failed to initialize:", error);
-			addMessage("Failed to load configuration", "error");
 		}
-	}, [updateAuthUI, addMessage]);
+	}, [updateAuthUI]);
+
+	const handleAuthCallbackInner = useCallback(async () => {
+		const params = new URLSearchParams(window.location.search);
+		const code = params.get("code");
+		const error = params.get("error");
+
+		if (error) {
+			return;
+		}
+
+		if (code && stravaClientRef.current) {
+			try {
+				const success = await stravaClientRef.current.handleCallback(code);
+				if (success) {
+					updateAuthUI();
+					window.history.replaceState({}, document.title, window.location.pathname);
+					// Auto-fetch after auth
+					fetchAndProcessInner();
+				}
+			} catch (e) {
+				console.error("Auth error:", e);
+			}
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [updateAuthUI]);
 
 	const onMapReady = useCallback(
-		(map: MapLibreMap) => {
+		(map: MapLibreMap, hydratedState: HydratedMapState | null) => {
 			mapRef.current = map;
+
+			if (hydratedState?.config) {
+				configRef.current = hydratedState.config;
+				setConfig(hydratedState.config);
+			}
+
+			if (hydratedState) {
+				visitedCellsRef.current = new Set(hydratedState.visitedCells);
+				processedActivityIdsRef.current = new Set(hydratedState.processedActivityIds);
+				allActivitiesRef.current = hydratedState.activities;
+				setAllActivities(hydratedState.activities);
+			}
 
 			// Exploration layer
 			explorationLayerRef.current = createExplorationLayer(map, {
@@ -522,6 +537,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 					setSidebarOpen(true);
 				},
 			});
+
+			if (hydratedState) {
+				routeLayerRef.current?.setActivities(hydratedState.activities);
+				routeLayerRef.current?.setStyle({
+					showPrivate: !configRef.current.skipPrivate,
+				});
+				routeLayerRef.current?.setPrivacyDistance(configRef.current.privacyDistance);
+			}
 
 			// City outline source + layer
 			map.addSource(CITY_OUTLINE_SOURCE_ID, {
@@ -560,7 +583,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			worker.onmessage = (event) => handleWorkerMessageRef.current(event.data);
 			worker.onerror = (error) => {
 				console.error("Worker error:", error);
-				addMessage("Processing error occurred", "error");
 				setIsProcessing(false);
 			};
 
@@ -570,7 +592,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			});
 			cityWorker.onerror = (error) => {
 				console.error("City worker error:", error);
-				addMessage("City worker error occurred", "error");
 			};
 
 			// City manager (pass the Vite-bundled worker)
@@ -581,95 +602,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				cityWorker,
 			);
 
-			// Load saved state
-			(async () => {
-				try {
-					const state = await loadState();
-					if (state) {
-						visitedCellsRef.current = state.visitedCells;
-						processedActivityIdsRef.current = state.processedActivityIds;
+			if (hydratedState) {
+				sendWorkerMessage({
+					type: "init",
+					data: {
+						visitedCells: hydratedState.visitedCells,
+						processedActivityIds: hydratedState.processedActivityIds,
+						config: configRef.current,
+						activities: hydratedState.activities,
+					},
+				});
 
-						const restoredConfig = state.config;
-						configRef.current = restoredConfig;
-						setConfig(restoredConfig);
-
-						allActivitiesRef.current = state.activities;
-						setAllActivities(state.activities);
-
-						// Restore route layer
-						routeLayerRef.current?.setActivities(state.activities);
-						routeLayerRef.current?.setStyle({
-							showPrivate: !restoredConfig.skipPrivate,
-						});
-						routeLayerRef.current?.setPrivacyDistance(restoredConfig.privacyDistance);
-
-						// Sync worker
-						sendWorkerMessage({
-							type: "init",
-							data: {
-								visitedCells: Array.from(visitedCellsRef.current),
-								processedActivityIds: Array.from(processedActivityIdsRef.current),
-								config: restoredConfig,
-								activities: state.activities,
-							},
-						});
-
-						cityManagerRef.current?.updateVisitedCells(visitedCellsRef.current);
-						if (state.activities.length > 0) {
-							cityManagerRef.current?.discoverCitiesFromActivities(state.activities);
-						}
-
-						// Request initial rectangles render
-						if (explorationLayerRef.current) {
-							sendWorkerMessage({
-								type: "process",
-								data: { activities: [] },
-							});
-						}
-
-						updateStatsUI();
-						addMessage(`Loaded ${visitedCellsRef.current.size} cells from cache`, "success");
-					}
-				} catch (error) {
-					console.error("Failed to load saved state:", error);
+				cityManagerRef.current?.updateVisitedCells(visitedCellsRef.current);
+				if (hydratedState.activities.length > 0) {
+					cityManagerRef.current?.discoverCitiesFromActivities(hydratedState.activities);
 				}
 
-				// Handle auth callback (URL params)
-				handleAuthCallbackInner();
-			})();
-		},
-		[addMessage, sendWorkerMessage, updateStatsUI],
-	);
-
-	const handleAuthCallbackInner = useCallback(async () => {
-		const params = new URLSearchParams(window.location.search);
-		const code = params.get("code");
-		const error = params.get("error");
-
-		if (error) {
-			addMessage(`Authentication failed: ${error}`, "error");
-			return;
-		}
-
-		if (code && stravaClientRef.current) {
-			try {
-				const success = await stravaClientRef.current.handleCallback(code);
-				if (success) {
-					addMessage("Successfully authenticated!", "success");
-					updateAuthUI();
-					window.history.replaceState({}, document.title, window.location.pathname);
-					// Auto-fetch after auth
-					fetchAndProcessInner();
-				} else {
-					addMessage("Authentication failed", "error");
+				if (explorationLayerRef.current) {
+					sendWorkerMessage({
+						type: "process",
+						data: { activities: [] },
+					});
 				}
-			} catch (e) {
-				console.error("Auth error:", e);
-				addMessage("Authentication error", "error");
+
+				updateStatsUI();
 			}
-		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [addMessage, updateAuthUI]);
+
+			// Handle auth callback (URL params)
+			handleAuthCallbackInner();
+		},
+		[handleAuthCallbackInner, sendWorkerMessage, updateStatsUI],
+	);
 
 	const authorize = useCallback(() => {
 		stravaClientRef.current?.authorize(["activity:read_all"]);
@@ -680,8 +643,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		setIsAuthenticated(false);
 		setAthlete(null);
 		clearState();
-		addMessage("Logged out", "info");
-	}, [addMessage]);
+	}, []);
 
 	const fetchAndProcessInner = useCallback(async () => {
 		const client = stravaClientRef.current;
@@ -690,43 +652,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 		try {
 			setIsProcessing(true);
-			addMessage("Fetching activities...", "info");
 
 			const activities = await client.fetchAllActivities((count) => {
 				setProgress({ current: count, total: count, message: `Fetching... ${count}` });
 			});
-
-			addMessage(`Fetched ${activities.length} activities`, "success");
 
 			allActivitiesRef.current = activities;
 			setAllActivities(activities);
 
 			routeLayerRef.current?.setActivities(activities);
 
-			// Jump to first valid location (best-effort, don't block processing)
-			let lat: number | undefined;
-			let lng: number | undefined;
+			const latestActivityView = getLatestActivityCenter(activities);
 
-			for (const activity of activities) {
-				const coords = activity.start_latlng as [number, number] | null | undefined;
-				if (!coords || coords.length < 2) continue;
-				const [candidateLat, candidateLng] = coords;
-				if (
-					typeof candidateLat === "number" &&
-					typeof candidateLng === "number" &&
-					!Number.isNaN(candidateLat) &&
-					!Number.isNaN(candidateLng) &&
-					candidateLat !== 0 &&
-					candidateLng !== 0
-				) {
-					lat = candidateLat;
-					lng = candidateLng;
-					break;
-				}
-			}
-
-			if (lat !== undefined && lng !== undefined) {
-				mapRef.current?.jumpTo({ center: [lng, lat], zoom: 12 });
+			if (latestActivityView) {
+				mapRef.current?.jumpTo(latestActivityView);
 			} else {
 				console.warn("No activity with valid location data found — skipping jumpTo");
 			}
@@ -739,13 +678,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 			const newActivities = activities.filter((a) => !processedActivityIdsRef.current.has(a.id));
 			if (newActivities.length === 0) {
-				addMessage("No new activities to process", "info");
 				setIsProcessing(false);
 				setProgress(null);
 				return;
 			}
-
-			addMessage(`Processing ${newActivities.length} new activities...`, "info");
 
 			sendWorkerMessage({
 				type: "process",
@@ -753,11 +689,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			});
 		} catch (error) {
 			console.error("Fetch error:", error);
-			addMessage("Failed to fetch activities", "error");
 			setIsProcessing(false);
 			setProgress(null);
 		}
-	}, [addMessage, sendWorkerMessage, saveCurrentState]);
+	}, [sendWorkerMessage, saveCurrentState]);
 
 	const fetchAndProcessActivities = useCallback(async () => {
 		await fetchAndProcessInner();
@@ -797,7 +732,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				});
 				cityWorker.onerror = (error) => {
 					console.error("City worker error:", error);
-					addMessage("City worker error occurred", "error");
 				};
 				cityManagerRef.current = new CityManager(
 					visitedCellsRef.current,
@@ -837,13 +771,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		routeLayerRef.current?.setToDate(date);
 	}, []);
 
-	const showMessage = useCallback(
-		(text: string, type: MessageType) => {
-			addMessage(text, type);
-		},
-		[addMessage],
-	);
-
 	const openSidebarAction = useCallback((activities: RouteClickFeature[]) => {
 		setSelectedActivities(activities);
 		setSidebarOpen(true);
@@ -855,7 +782,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const jumpToLocation = useCallback((center: [number, number]) => {
-		mapRef.current?.jumpTo({ center, zoom: 12 });
+		const view: MapViewState = { center, zoom: 12 };
+		mapRef.current?.jumpTo(view);
 	}, []);
 
 	const jumpToCity = useCallback(
@@ -1030,7 +958,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			stats,
 			cityStats,
 			cityDiscoveryProgress,
-			messages,
 			selectedActivities,
 			sidebarOpen,
 			// actions
@@ -1046,7 +973,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setRouteStyle: setRouteStyleAction,
 			setFromDate: setFromDateAction,
 			setToDate: setToDateAction,
-			showMessage,
 			openSidebar: openSidebarAction,
 			closeSidebar: closeSidebarAction,
 			jumpToLocation,
@@ -1064,7 +990,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			stats,
 			cityStats,
 			cityDiscoveryProgress,
-			messages,
 			selectedActivities,
 			sidebarOpen,
 			initialize,
@@ -1079,7 +1004,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setRouteStyleAction,
 			setFromDateAction,
 			setToDateAction,
-			showMessage,
 			openSidebarAction,
 			closeSidebarAction,
 			jumpToLocation,

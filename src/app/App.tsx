@@ -5,7 +5,7 @@ import { AppProvider, useApp } from "./AppContext";
 // These will be created separately; we import them here so the layout is complete.
 // Until they exist the build will error, but the structure is correct.
 import AuthSection from "@/features/auth/AuthSection";
-import Notifications from "@/features/notifications/Notifications";
+
 import LocationSearch from "@/features/controls/LocationSearch";
 import ProgressSection from "@/features/controls/ProgressBar";
 import Stats from "@/features/stats/Stats";
@@ -38,7 +38,7 @@ function AppShell() {
 
 					<div className="sidebar-controls">
 						<AuthSection />
-						<Notifications />
+
 						<LocationSearch />
 						<ProgressSection />
 						<Stats />

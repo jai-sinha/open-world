@@ -1,43 +1,62 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import maplibregl from "maplibre-gl";
-import { useApp } from "@/app/AppContext";
+import { MAP_CONFIG, useApp } from "@/app/AppContext";
+import { hydrateMapState, type HydratedMapState } from "@/features/map/map-state";
 
 export default function MapView() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const { onMapReady } = useApp();
+	const containerRef = useRef<HTMLDivElement>(null);
+	const mapRef = useRef<maplibregl.Map | null>(null);
+	const { onMapReady } = useApp();
+	const [hydratedState, setHydratedState] = useState<HydratedMapState | null>(null);
+	const [isReadyToCreateMap, setIsReadyToCreateMap] = useState(false);
 
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+	useEffect(() => {
+		let cancelled = false;
 
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
-      center: [11.582, 48.1351],
-      zoom: 12,
-    });
+		(async () => {
+			const state = await hydrateMapState();
+			if (cancelled) return;
 
-    mapRef.current = map;
+			setHydratedState(state);
+			setIsReadyToCreateMap(true);
+		})();
 
-    map.on("load", () => {
-      map.addControl(new maplibregl.NavigationControl(), "top-right");
-      map.addControl(new maplibregl.FullscreenControl(), "top-right");
-      map.addControl(
-        new maplibregl.GeolocateControl({
-          positionOptions: { enableHighAccuracy: true },
-          trackUserLocation: true,
-        }),
-        "top-right"
-      );
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
-      onMapReady(map);
-    });
+	useEffect(() => {
+		if (!containerRef.current || mapRef.current || !isReadyToCreateMap) return;
 
-    return () => {
-      map.remove();
-      mapRef.current = null;
-    };
-  }, [onMapReady]);
+		const map = new maplibregl.Map({
+			container: containerRef.current,
+			style: MAP_CONFIG.style,
+			center: hydratedState?.initialView?.center ?? MAP_CONFIG.defaultCenter,
+			zoom: hydratedState?.initialView?.zoom ?? MAP_CONFIG.defaultZoom,
+		});
 
-  return <div id="map" ref={containerRef} />;
+		mapRef.current = map;
+
+		map.on("load", () => {
+			map.addControl(new maplibregl.NavigationControl(), "top-right");
+			map.addControl(new maplibregl.FullscreenControl(), "top-right");
+			map.addControl(
+				new maplibregl.GeolocateControl({
+					positionOptions: { enableHighAccuracy: true },
+					trackUserLocation: true,
+				}),
+				"top-right",
+			);
+
+			onMapReady(map, hydratedState);
+		});
+
+		return () => {
+			map.remove();
+			mapRef.current = null;
+		};
+	}, [hydratedState, isReadyToCreateMap, onMapReady]);
+
+	return <div id="map" ref={containerRef} />;
 }
