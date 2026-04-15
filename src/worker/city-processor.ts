@@ -448,9 +448,6 @@ class CityProcessor {
 	private pmtilesCache = new Map<string, PMTiles>();
 	private tilesBaseUrl = DEFAULT_TILES_BASE_URL;
 
-	// Maps rounded lat/lng location keys to their resolved city IDs (populated during discovery)
-	private locationKeyToCityId = new Map<string, string>();
-
 	// Self-hosted world lookup for reverse geocoding
 	private worldLookup: WorldLookup;
 
@@ -590,8 +587,6 @@ class CityProcessor {
 		}
 		this.isProcessing = true;
 
-		console.log("[city-worker] discoverCities: starting with", activities.length, "activities");
-
 		// Reset progress counters for both phases
 		this.locationTotal = 0;
 		this.locationProcessed = 0;
@@ -600,7 +595,6 @@ class CityProcessor {
 
 		try {
 			const uniqueLocations = this.groupActivitiesByLocation(activities);
-			console.log("[city-worker] unique locations:", uniqueLocations.length);
 			this.locationTotal = uniqueLocations.length;
 
 			this.postProgress();
@@ -636,40 +630,7 @@ class CityProcessor {
 				}
 			}
 
-			console.log("[city-worker] discovery complete, cities found:", this.cities.size);
 			this.postStats("COMPLETE");
-
-			// Debug: log all StravaActivities processed, grouped by city
-			const cityStats = computeCityStats(this.cities.values(), this.visitedCells);
-			const statsByCity = new Map(cityStats.map((s) => [s.cityId, s]));
-
-			const keyToActivities = new Map<string, StravaActivity[]>();
-			for (const activity of activities) {
-				if (!activity.start_latlng || activity.start_latlng.length < 2) continue;
-				const [lat, lng] = activity.start_latlng;
-				const key = `${lat.toFixed(1)},${lng.toFixed(1)}`;
-				if (!keyToActivities.has(key)) keyToActivities.set(key, []);
-				keyToActivities.get(key)!.push(activity);
-			}
-
-			const cityActivities = new Map<string, StravaActivity[]>();
-			for (const [key, cityId] of this.locationKeyToCityId) {
-				const acts = keyToActivities.get(key) ?? [];
-				if (!cityActivities.has(cityId)) cityActivities.set(cityId, []);
-				cityActivities.get(cityId)!.push(...acts);
-			}
-
-			for (const [cityId, acts] of cityActivities) {
-				const city = this.cities.get(cityId);
-				const stats = statsByCity.get(cityId);
-				console.debug({
-					city: city?.displayName ?? cityId,
-					exploration_pct: stats ? parseFloat(stats.percentage.toFixed(2)) : null,
-					road_tiles: city?.roadTiles || "(empty)",
-					road_cells_count: city?.roadCells?.size ?? "(null — computation skipped or failed)",
-					activities: acts,
-				});
-			}
 		} catch (e) {
 			console.error("City discovery failed in worker:", e);
 			self.postMessage({ type: "ERROR", payload: { message: String(e) } });
@@ -707,11 +668,8 @@ class CityProcessor {
 			const result = await this.worldLookup.query(lat, lng);
 
 			if (!result || !result.osmId || !result.name) {
-				console.log("[city-worker] no city found at", lat, lng);
 				return;
 			}
-
-			console.log("[city-worker] identified city:", result.name, result.osmId);
 
 			// Use osmId as the unique city key (globally unique, stable)
 			const cityId = result.osmId;

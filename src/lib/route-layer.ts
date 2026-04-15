@@ -1,9 +1,30 @@
 // Route overlay layer for displaying Strava activity polylines on the map
 
-import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
+import type {
+	Map as MapLibreMap,
+	GeoJSONSource,
+	MapLayerMouseEvent,
+	MapGeoJSONFeature,
+} from "maplibre-gl";
+import type { Feature, FeatureCollection, LineString } from "geojson";
 import type { StravaActivity } from "../types";
 import polyline from "@mapbox/polyline";
 import { trimPolylineByDistance } from "./projection";
+
+export interface RouteFeatureProperties {
+	id: number;
+	name: string;
+	type: string;
+	distance: number;
+	date: string;
+	color: string;
+}
+
+export type RouteFeature = Feature<LineString, RouteFeatureProperties>;
+export type RouteFeatureCollection = FeatureCollection<LineString, RouteFeatureProperties>;
+export type RouteClickFeature = MapGeoJSONFeature & {
+	properties: RouteFeatureProperties;
+};
 
 export interface RouteLayerOptions {
 	lineColor?: string;
@@ -12,7 +33,7 @@ export interface RouteLayerOptions {
 	showPrivate?: boolean;
 	imperialUnits?: boolean;
 	privacyDistance?: number;
-	onRouteClick?: (features: any[]) => void;
+	onRouteClick?: (features: RouteClickFeature[]) => void;
 	fromDate?: Date;
 	toDate?: Date;
 }
@@ -109,16 +130,18 @@ export class RouteOverlayLayer {
 		this.map.on("click", this.layerId, this.onRouteClick);
 	}
 
-	private onRouteClick = (e: any): void => {
+	private onRouteClick = (e: MapLayerMouseEvent): void => {
 		if (!this.options.onRouteClick) return;
 
-		const features = this.map.queryRenderedFeatures(e.point, { layers: [this.layerId] });
+		const features = this.map.queryRenderedFeatures(e.point, {
+			layers: [this.layerId],
+		}) as RouteClickFeature[];
 		if (features.length > 0) {
 			this.options.onRouteClick(features);
 		}
 	};
 
-	private onMouseMove = (e: any): void => {
+	private onMouseMove = (e: MapLayerMouseEvent): void => {
 		if (!this.tooltip) return;
 
 		// Query all features at this point to get overlapping routes
@@ -165,7 +188,7 @@ export class RouteOverlayLayer {
 		}
 	};
 
-	private activityToFeature(activity: StravaActivity) {
+	private activityToFeature(activity: StravaActivity): RouteFeature | null {
 		if (this.options.fromDate && new Date(activity.start_date_local) < this.options.fromDate)
 			return null;
 		if (this.options.toDate && new Date(activity.start_date_local) > this.options.toDate)
@@ -211,17 +234,21 @@ export class RouteOverlayLayer {
 				(this.options.showPrivate || !a.private) && (a.map?.summary_polyline || a.map?.polyline),
 		);
 
-		const features = filtered.map((a) => this.activityToFeature(a)).filter(Boolean);
+		const features = filtered
+			.map((activity) => this.activityToFeature(activity))
+			.filter((feature): feature is RouteFeature => feature !== null);
 		const source = this.map.getSource(this.sourceId) as GeoJSONSource;
 		if (!source) {
 			console.error("Route layer source not found:", this.sourceId);
 			return;
 		}
 
-		source.setData({
+		const data: RouteFeatureCollection = {
 			type: "FeatureCollection",
-			features: features as any,
-		});
+			features,
+		};
+
+		source.setData(data);
 	}
 
 	setFromDate(date: Date | null): void {

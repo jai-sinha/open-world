@@ -1,6 +1,36 @@
 import { Offcanvas } from "react-bootstrap";
 import { useApp } from "@/app/AppContext";
 
+interface SidebarActivity {
+	id: number;
+	name: string;
+	type: string;
+	distance: number;
+	date: string;
+	color?: string;
+}
+
+function isSidebarActivity(value: unknown): value is SidebarActivity {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as Record<string, unknown>;
+	return (
+		typeof candidate.id === "number" &&
+		typeof candidate.name === "string" &&
+		typeof candidate.type === "string" &&
+		typeof candidate.distance === "number" &&
+		typeof candidate.date === "string"
+	);
+}
+
+function getSidebarActivity(feature: unknown): SidebarActivity | null {
+	if (!feature || typeof feature !== "object") return null;
+
+	const candidate = feature as { properties?: unknown };
+	const value = candidate.properties ?? feature;
+
+	return isSidebarActivity(value) ? value : null;
+}
+
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
 	weekday: "short",
 	year: "numeric",
@@ -30,27 +60,31 @@ export default function ActivitySidebar() {
 				<Offcanvas.Title>{title}</Offcanvas.Title>
 			</Offcanvas.Header>
 			<Offcanvas.Body>
-				{selectedActivities.map((feature: any) => {
-					const p = feature.properties ?? feature;
+				{selectedActivities.map((feature) => {
+					const activity = getSidebarActivity(feature);
+					if (!activity) return null;
+
 					return (
-						<div key={p.id} className="mb-3 pb-3 border-bottom">
-							<div className="fw-bold mb-1">{p.name}</div>
+						<div key={activity.id} className="mb-3 pb-3 border-bottom">
+							<div className="fw-bold mb-1">{activity.name}</div>
 							<div className="d-flex align-items-center mb-1 small text-muted">
 								<span
 									className="d-inline-block rounded-circle me-1 shrink-0"
 									style={{
 										width: "10px",
 										height: "10px",
-										backgroundColor: p.color || "#fc5200",
+										backgroundColor: activity.color || "#fc5200",
 									}}
 								/>
 								<span>
-									{p.type} &bull; {formatDistance(p.distance, imperialUnits)}
+									{activity.type} &bull; {formatDistance(activity.distance, imperialUnits)}
 								</span>
 							</div>
-							<div className="small text-muted mb-1">{dateFormatter.format(new Date(p.date))}</div>
+							<div className="small text-muted mb-1">
+								{dateFormatter.format(new Date(activity.date))}
+							</div>
 							<a
-								href={`https://www.strava.com/activities/${p.id}`}
+								href={`https://www.strava.com/activities/${activity.id}`}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="small"

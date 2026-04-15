@@ -102,7 +102,6 @@ async function purgeNegativeLookupCache(): Promise<void> {
 		}
 		await tx.done;
 		if (purged > 0) {
-			console.log(`[WorldLookup] purged ${purged} stale negative cache entries from IDB`);
 		}
 	} catch (e) {
 		console.warn("[WorldLookup] failed to purge negative cache:", e);
@@ -219,26 +218,10 @@ export class WorldLookup {
 		// Check IndexedDB cache first
 		const cached = await getCachedLookup(lat, lng);
 		if (cached !== undefined) {
-			if (cached !== null) {
-				console.log(
-					`[WorldLookup] cache hit for ${lat.toFixed(3)},${lng.toFixed(3)}: ${cached.name}`,
-				);
-			}
 			return cached;
 		}
 
-		console.log(
-			`[WorldLookup] cache miss, querying PMTiles for ${lat.toFixed(3)},${lng.toFixed(3)}`,
-		);
 		const result = await this.queryInternal(lat, lng);
-
-		if (result) {
-			console.log(
-				`[WorldLookup] found: ${result.name} (${result.osmId}) for ${lat.toFixed(3)},${lng.toFixed(3)}`,
-			);
-		} else {
-			console.log(`[WorldLookup] no result for ${lat.toFixed(3)},${lng.toFixed(3)}`);
-		}
 
 		// Cache the result (null results get a short TTL to avoid poisoning from transient failures)
 		await cacheLookupResult(lat, lng, result);
@@ -355,7 +338,6 @@ export class WorldLookup {
 		try {
 			const resp = await this.pmtiles.getZxy(zoom, x, y);
 			if (!resp || !resp.data) {
-				console.log(`[WorldLookup] no tile data for ${key}`);
 				this.tileCache.set(key, null);
 				return null;
 			}

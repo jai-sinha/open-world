@@ -16,6 +16,24 @@ export interface StravaActivity {
 	visibility?: "everyone" | "followers_only" | "only_me";
 }
 
+export interface RouteActivityProperties {
+	id: number;
+	name: string;
+	type: string;
+	distance: number;
+	date: string;
+	color: string;
+}
+
+export interface RouteActivityFeature {
+	type: "Feature";
+	properties: RouteActivityProperties;
+	geometry: {
+		type: "LineString";
+		coordinates: [number, number][];
+	};
+}
+
 export interface StravaTokenResponse {
 	access_token: string;
 	refresh_token: string;

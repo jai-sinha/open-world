@@ -70,7 +70,6 @@ export class CityManager {
 
 		this.worker.onmessage = (event: MessageEvent<CityProcessorResponse>) => {
 			const { type, payload } = event.data;
-			console.debug("[CityManager] received:", type);
 
 			switch (type) {
 				case "PROGRESS":
@@ -96,7 +95,7 @@ export class CityManager {
 					console.error("[CityManager] worker error:", payload.message);
 					break;
 				default:
-					console.warn("[CityManager] unknown message type:", (event.data as any)?.type);
+					console.warn("Unknown city worker message type:", (event.data as any)?.type);
 			}
 		};
 	}

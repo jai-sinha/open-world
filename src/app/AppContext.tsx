@@ -19,7 +19,7 @@ import type {
 import { createStravaClient, StravaClient } from "@/lib/strava";
 import { loadState, saveState, clearState } from "@/lib/storage";
 import { createExplorationLayer, ExplorationCanvasLayer } from "@/lib/canvas-layer";
-import { createRouteOverlay, RouteOverlayLayer } from "@/lib/route-layer";
+import { createRouteOverlay, RouteOverlayLayer, type RouteClickFeature } from "@/lib/route-layer";
 import { CityManager, type CityStats } from "@/lib/geocoding/city-manager";
 import { setRoadPMTilesURL } from "@/lib/tiles";
 
@@ -93,7 +93,7 @@ interface AppContextValue {
 	cityStats: CityStats[];
 	cityDiscoveryProgress: number;
 	messages: AppMessage[];
-	selectedActivities: any[];
+	selectedActivities: RouteClickFeature[];
 	sidebarOpen: boolean;
 
 	/* ─── actions ─── */
@@ -110,7 +110,7 @@ interface AppContextValue {
 	setFromDate: (date: Date | null) => void;
 	setToDate: (date: Date | null) => void;
 	showMessage: (text: string, type: MessageType) => void;
-	openSidebar: (activities: any[]) => void;
+	openSidebar: (activities: RouteClickFeature[]) => void;
 	closeSidebar: () => void;
 	jumpToLocation: (center: [number, number]) => void;
 	jumpToCity: (payload: { center: [number, number]; outline?: [number, number][][] }) => void;
@@ -155,7 +155,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [cityStats, setCityStats] = useState<CityStats[]>([]);
 	const [cityDiscoveryProgress, setCityDiscoveryProgress] = useState(0);
 	const [messages, setMessages] = useState<AppMessage[]>([]);
-	const [selectedActivities, setSelectedActivities] = useState<any[]>([]);
+	const [selectedActivities, setSelectedActivities] = useState<RouteClickFeature[]>([]);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 
 	/* ─── refs ─── */
@@ -439,7 +439,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				return;
 			}
 
-			mapRef.current.setPaintProperty(CITY_OUTLINE_LAYER_ID, "line-opacity", opacity);
+			mapRef.current.setPaintProperty(
+				CITY_OUTLINE_LAYER_ID,
+				"line-opacity",
+				Math.max(0, Math.min(1, opacity)),
+			);
 			cityOutlineAnimationFrameRef.current = requestAnimationFrame(animate);
 		};
 
@@ -513,7 +517,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				lineOpacity: 0.5,
 				showPrivate: !configRef.current.skipPrivate,
 				privacyDistance: configRef.current.privacyDistance,
-				onRouteClick: (features: any[]) => {
+				onRouteClick: (features: RouteClickFeature[]) => {
 					setSelectedActivities(features);
 					setSidebarOpen(true);
 				},
@@ -576,10 +580,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				tilesBaseUrlRef.current || undefined,
 				cityWorker,
 			);
-			console.debug(
-				"[app] CityManager created, tilesBaseUrl:",
-				tilesBaseUrlRef.current || "(default)",
-			);
 
 			// Load saved state
 			(async () => {
@@ -616,10 +616,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 						cityManagerRef.current?.updateVisitedCells(visitedCellsRef.current);
 						if (state.activities.length > 0) {
-							console.debug(
-								"[app] Starting city discovery from IDB restore, activities:",
-								state.activities.length,
-							);
 							cityManagerRef.current?.discoverCitiesFromActivities(state.activities);
 						}
 
@@ -735,7 +731,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				console.warn("No activity with valid location data found — skipping jumpTo");
 			}
 
-			console.debug("[app] Starting city discovery from fetch, activities:", activities.length);
 			cityManagerRef.current?.discoverCitiesFromActivities(activities);
 
 			// Sync worker with full list
@@ -796,10 +791,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 			if (partial.cellSize && explorationLayerRef.current) {
 				explorationLayerRef.current.setCellSize(partial.cellSize);
+				cityManagerRef.current?.terminate();
+				const cityWorker = new Worker(new URL("../worker/city-processor.ts", import.meta.url), {
+					type: "module",
+				});
+				cityWorker.onerror = (error) => {
+					console.error("City worker error:", error);
+					addMessage("City worker error occurred", "error");
+				};
 				cityManagerRef.current = new CityManager(
 					visitedCellsRef.current,
 					newConfig.cellSize,
 					tilesBaseUrlRef.current || undefined,
+					cityWorker,
 				);
 				if (allActivitiesRef.current.length > 0) {
 					cityManagerRef.current.discoverCitiesFromActivities(allActivitiesRef.current);
@@ -840,7 +844,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		[addMessage],
 	);
 
-	const openSidebarAction = useCallback((activities: any[]) => {
+	const openSidebarAction = useCallback((activities: RouteClickFeature[]) => {
 		setSelectedActivities(activities);
 		setSidebarOpen(true);
 	}, []);
