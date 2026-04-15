@@ -449,6 +449,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Actions
 	// ──────────────────────────────────────────────────────────
 
+	const handleAuthCallbackInner = useCallback(async () => {
+		const params = new URLSearchParams(window.location.search);
+		const code = params.get("code");
+		const error = params.get("error");
+
+		if (error) {
+			return;
+		}
+
+		if (code && stravaClientRef.current) {
+			try {
+				const success = await stravaClientRef.current.handleCallback(code);
+				if (success) {
+					updateAuthUI();
+					window.history.replaceState({}, document.title, window.location.pathname);
+					// Auto-fetch after auth
+					fetchAndProcessInner();
+				} else {
+					updateAuthUI();
+				}
+			} catch (e) {
+				console.error("Auth error:", e);
+			}
+			return;
+		}
+
+		updateAuthUI();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [updateAuthUI]);
+
 	const initialize = useCallback(async () => {
 		if (initializedRef.current) return;
 		initializedRef.current = true;
@@ -469,36 +499,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				useLocalServer: true,
 			});
 
-			updateAuthUI();
+			const params = new URLSearchParams(window.location.search);
+			const code = params.get("code");
+			const error = params.get("error");
+
+			console.debug("Strava auth initialize", {
+				hasCode: !!code,
+				error,
+				pathname: window.location.pathname,
+			});
+
+			if (code || error) {
+				await handleAuthCallbackInner();
+			} else {
+				updateAuthUI();
+			}
 		} catch (error) {
 			console.error("Failed to initialize:", error);
 		}
-	}, [updateAuthUI]);
-
-	const handleAuthCallbackInner = useCallback(async () => {
-		const params = new URLSearchParams(window.location.search);
-		const code = params.get("code");
-		const error = params.get("error");
-
-		if (error) {
-			return;
-		}
-
-		if (code && stravaClientRef.current) {
-			try {
-				const success = await stravaClientRef.current.handleCallback(code);
-				if (success) {
-					updateAuthUI();
-					window.history.replaceState({}, document.title, window.location.pathname);
-					// Auto-fetch after auth
-					fetchAndProcessInner();
-				}
-			} catch (e) {
-				console.error("Auth error:", e);
-			}
-		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [updateAuthUI]);
+	}, [handleAuthCallbackInner, updateAuthUI]);
 
 	const onMapReady = useCallback(
 		(map: MapLibreMap, hydratedState: HydratedMapState | null) => {
@@ -627,9 +646,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 				updateStatsUI();
 			}
-
-			// Handle auth callback (URL params)
-			handleAuthCallbackInner();
 		},
 		[handleAuthCallbackInner, sendWorkerMessage, updateStatsUI],
 	);

@@ -55,6 +55,8 @@ export class CityManager {
 	private onProgressCallback?: (percentage: number) => void;
 	private discoveryPromiseResolve?: (stats: CityStats[]) => void;
 	private viewportStatsResolve?: (percentage: number) => void;
+	private discoveryRunId = 0;
+	private activeDiscoveryRunId: number | null = null;
 
 	constructor(visitedCells: Set<number>, cellSize: number, tilesBaseUrl?: string, worker?: Worker) {
 		this.visitedCells = visitedCells;
@@ -73,18 +75,25 @@ export class CityManager {
 
 			switch (type) {
 				case "PROGRESS":
+					if (this.activeDiscoveryRunId === null) break;
 					this.discoveryProgress = payload.percentage;
 					this.onProgressCallback?.(payload.percentage);
 					this.notifyDiscoveryProgress(payload.percentage);
 					break;
 				case "STATS_UPDATE":
+					if (this.activeDiscoveryRunId === null) break;
 					this.latestStats = payload.stats;
 					// Notify UI of incremental updates (separate event to avoid premature list display)
 					this.notifyStatsUpdate();
 					break;
 				case "COMPLETE":
+					if (this.activeDiscoveryRunId === null) break;
 					this.latestStats = payload.stats;
+					this.discoveryProgress = 100;
+					this.activeDiscoveryRunId = null;
+					this.onProgressCallback = undefined;
 					this.discoveryPromiseResolve?.(payload.stats);
+					this.discoveryPromiseResolve = undefined;
 					this.notifyDiscoveryComplete();
 					break;
 				case "VIEWPORT_STATS":
@@ -92,6 +101,11 @@ export class CityManager {
 					this.viewportStatsResolve = undefined;
 					break;
 				case "ERROR":
+					if (this.activeDiscoveryRunId !== null) {
+						this.activeDiscoveryRunId = null;
+						this.onProgressCallback = undefined;
+						this.discoveryPromiseResolve = undefined;
+					}
 					console.error("[CityManager] worker error:", payload.message);
 					break;
 				default:
@@ -114,6 +128,8 @@ export class CityManager {
 		activities: StravaActivity[],
 		onProgress?: (percentage: number) => void,
 	): Promise<CityStats[]> {
+		const runId = ++this.discoveryRunId;
+		this.activeDiscoveryRunId = runId;
 		this.onProgressCallback = onProgress;
 		this.latestStats = [];
 		this.discoveryProgress = 0;
@@ -122,7 +138,11 @@ export class CityManager {
 		this.notifyDiscoveryStart(0);
 
 		return new Promise((resolve) => {
-			this.discoveryPromiseResolve = resolve;
+			this.discoveryPromiseResolve = (stats) => {
+				if (this.activeDiscoveryRunId === null || runId === this.discoveryRunId) {
+					resolve(stats);
+				}
+			};
 			this.worker.postMessage({
 				type: "DISCOVER_CITIES",
 				payload: {
@@ -166,6 +186,9 @@ export class CityManager {
 	}
 
 	public terminate() {
+		this.activeDiscoveryRunId = null;
+		this.onProgressCallback = undefined;
+		this.discoveryPromiseResolve = undefined;
 		this.worker.terminate();
 	}
 
