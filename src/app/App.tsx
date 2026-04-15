@@ -36,9 +36,8 @@ function AppShell() {
 						<p className="subtitle">Strava Exploration Map</p>
 					</div>
 
-					<AuthSection />
-
 					<div className="sidebar-controls">
+						<AuthSection />
 						<Notifications />
 						<LocationSearch />
 						<ProgressSection />

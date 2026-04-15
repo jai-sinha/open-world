@@ -6,14 +6,14 @@ export default function AuthSection() {
 		useApp();
 
 	return (
-		<div className="p-3 border-bottom">
+		<div className="p-3">
 			{!isAuthenticated ? (
 				<Button variant="primary" className="w-100" onClick={authorize}>
 					Connect Strava
 				</Button>
 			) : (
 				<div className="d-flex flex-column gap-2">
-					<Button variant="outline-secondary" className="w-100" onClick={logout}>
+					<Button variant="danger" className="w-100" onClick={logout}>
 						Logout {athlete?.firstname} {athlete?.lastname}
 					</Button>
 					<Button
