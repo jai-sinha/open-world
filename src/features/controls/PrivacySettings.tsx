@@ -5,9 +5,7 @@ import { useApp } from "@/app/AppContext";
 export default function PrivacySettings() {
 	const { config, updatePrivacySettings } = useApp();
 
-	const [hideStartFinish, setHideStartFinish] = useState(
-		config.privacyDistance > 0,
-	);
+	const [hideStartFinish, setHideStartFinish] = useState(config.privacyDistance > 0);
 	const [skipPrivate, setSkipPrivate] = useState(config.skipPrivate);
 
 	const handleHideToggle = (checked: boolean) => {
@@ -24,9 +22,7 @@ export default function PrivacySettings() {
 		setSkipPrivate(checked);
 		updatePrivacySettings({
 			enabled: hideStartFinish,
-			removeDistance: hideStartFinish
-				? config.privacyDistance || 200
-				: 0,
+			removeDistance: hideStartFinish ? config.privacyDistance || 200 : 0,
 			snapToGrid: config.snapToGrid,
 			skipPrivateActivities: checked,
 		});
@@ -34,9 +30,7 @@ export default function PrivacySettings() {
 
 	return (
 		<Card className="mx-3 mb-3">
-			<Card.Header className="fw-semibold">
-				Privacy Settings
-			</Card.Header>
+			<Card.Header className="fw-semibold">Privacy Settings</Card.Header>
 			<Card.Body>
 				<Form.Check
 					type="switch"
@@ -51,9 +45,7 @@ export default function PrivacySettings() {
 					id="privacy-skip-private"
 					label="Skip Private Activities"
 					checked={skipPrivate}
-					onChange={(e) =>
-						handleSkipPrivateToggle(e.target.checked)
-					}
+					onChange={(e) => handleSkipPrivateToggle(e.target.checked)}
 				/>
 			</Card.Body>
 		</Card>

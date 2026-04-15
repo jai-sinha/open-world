@@ -9,9 +9,8 @@ export default function CityStats() {
 
 	return (
 		<Card className="mx-3 mb-3">
+			<Card.Header className="fw-semibold">Top Cities</Card.Header>
 			<Card.Body>
-				<Card.Title>Top Cities</Card.Title>
-
 				{isDiscovering && (
 					<div className="mb-3">
 						<small className="text-muted d-block mb-1">

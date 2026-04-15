@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
+import ReactSlider from "react-slider";
 import { Card, Form } from "react-bootstrap";
 import { useApp } from "@/app/AppContext";
 import { ACTIVITY_COLORS } from "@/lib/route-layer";
@@ -228,129 +229,45 @@ function DualRangeSlider({
 	onFromChange,
 	onToChange,
 }: DualRangeSliderProps) {
-	const trackRef = useRef<HTMLDivElement>(null);
-	const draggingRef = useRef<"from" | "to" | null>(null);
-
-	const range = max - min || 1;
-	const fromPercent = ((fromValue - min) / range) * 100;
-	const toPercent = ((toValue - min) / range) * 100;
-
-	const indexFromPointer = useCallback(
-		(clientX: number): number => {
-			const track = trackRef.current;
-			if (!track) return min;
-			const rect = track.getBoundingClientRect();
-			const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-			return Math.round(min + ratio * (max - min));
+	const handleChange = useCallback(
+		(values: readonly number[]) => {
+			const [nextFrom, nextTo] = values;
+			onFromChange(nextFrom);
+			onToChange(nextTo);
 		},
-		[min, max],
-	);
-
-	const onPointerMove = useCallback(
-		(e: PointerEvent) => {
-			const idx = indexFromPointer(e.clientX);
-			if (draggingRef.current === "from") {
-				onFromChange(Math.min(idx, toValue));
-			} else if (draggingRef.current === "to") {
-				onToChange(Math.max(idx, fromValue));
-			}
-		},
-		[indexFromPointer, fromValue, toValue, onFromChange, onToChange],
-	);
-
-	const onPointerUp = useCallback(() => {
-		draggingRef.current = null;
-		window.removeEventListener("pointermove", onPointerMove);
-		window.removeEventListener("pointerup", onPointerUp);
-	}, [onPointerMove]);
-
-	const startDrag = useCallback(
-		(handle: "from" | "to") => {
-			draggingRef.current = handle;
-			window.addEventListener("pointermove", onPointerMove);
-			window.addEventListener("pointerup", onPointerUp);
-		},
-		[onPointerMove, onPointerUp],
-	);
-
-	const onTrackPointerDown = useCallback(
-		(e: React.PointerEvent<HTMLDivElement>) => {
-			const idx = indexFromPointer(e.clientX);
-			const distFrom = Math.abs(idx - fromValue);
-			const distTo = Math.abs(idx - toValue);
-			const handle = distFrom <= distTo ? "from" : "to";
-
-			if (handle === "from") {
-				onFromChange(Math.min(idx, toValue));
-			} else {
-				onToChange(Math.max(idx, fromValue));
-			}
-
-			startDrag(handle);
-		},
-		[indexFromPointer, fromValue, toValue, onFromChange, onToChange, startDrag],
+		[onFromChange, onToChange],
 	);
 
 	return (
-		<div
-			className="range-slider-wrap position-relative"
-			style={{ height: "24px", touchAction: "none" }}
-		>
-			<div
-				ref={trackRef}
-				className="range-slider-track position-absolute rounded bg-secondary bg-opacity-25"
-				style={{
-					top: "10px",
-					left: 0,
-					right: 0,
-					height: "4px",
-					cursor: "pointer",
-				}}
-				onPointerDown={onTrackPointerDown}
-			>
-				<div
-					className="range-slider-fill position-absolute rounded bg-primary"
-					style={{
-						top: 0,
-						height: "100%",
-						left: `${fromPercent}%`,
-						width: `${toPercent - fromPercent}%`,
-					}}
-				/>
-			</div>
-			<div
-				className="range-slider-thumb position-absolute rounded-circle bg-primary shadow-sm"
-				/* border via inline style to avoid Bootstrap class conflicts */
-				style={{
-					width: "16px",
-					height: "16px",
-					top: "4px",
-					left: `calc(${fromPercent}% - 8px)`,
-					cursor: "grab",
-					zIndex: 2,
-					border: "2px solid white",
-				}}
-				onPointerDown={(e) => {
-					e.stopPropagation();
-					startDrag("from");
-				}}
-			/>
-			<div
-				className="range-slider-thumb position-absolute rounded-circle bg-primary shadow-sm"
-				/* border via inline style to avoid Bootstrap class conflicts */
-				style={{
-					width: "16px",
-					height: "16px",
-					top: "4px",
-					left: `calc(${toPercent}% - 8px)`,
-					cursor: "grab",
-					zIndex: 2,
-					border: "2px solid white",
-				}}
-				onPointerDown={(e) => {
-					e.stopPropagation();
-					startDrag("to");
-				}}
+		<div className="py-2">
+			<ReactSlider
+				className="position-relative dual-range-slider"
+				min={min}
+				max={max}
+				value={[fromValue, toValue]}
+				onChange={handleChange}
+				pearling
+				minDistance={0}
+				ariaLabel={["Start date", "End date"]}
+				ariaValuetext={(state: { valueNow: number }) => `Thumb value ${state.valueNow}`}
+				renderTrack={(props: React.HTMLAttributes<HTMLDivElement>, state: { index: number }) => (
+					<div
+						{...props}
+						className={`dual-range-slider-track position-absolute ${
+							state.index === 1 ? "bg-primary" : "bg-secondary bg-opacity-25"
+						}`}
+					/>
+				)}
+				renderThumb={(
+					props: React.HTMLAttributes<HTMLDivElement> & { style?: React.CSSProperties },
+					state: { index: number },
+				) => (
+					<div
+						{...props}
+						className="dual-range-slider-thumb position-absolute bg-white border border-primary shadow-sm"
+						aria-label={state.index === 0 ? "Start date" : "End date"}
+					/>
+				)}
 			/>
 		</div>
 	);

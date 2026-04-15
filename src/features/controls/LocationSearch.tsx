@@ -40,8 +40,8 @@ export default function LocationSearch() {
 
 	return (
 		<Card className="mx-3 mb-3">
+			<Card.Header className="fw-semibold">Jump to Location</Card.Header>
 			<Card.Body>
-				<Card.Title className="fs-6 mb-2">Jump to Location</Card.Title>
 				<InputGroup>
 					<Form.Control
 						type="text"
@@ -51,11 +51,7 @@ export default function LocationSearch() {
 						onKeyDown={handleKeyDown}
 						disabled={searching}
 					/>
-					<Button
-						variant="primary"
-						onClick={handleSearch}
-						disabled={searching || !query.trim()}
-					>
+					<Button variant="primary" onClick={handleSearch} disabled={searching || !query.trim()}>
 						{searching ? (
 							<Spinner animation="border" size="sm" role="status">
 								<span className="visually-hidden">Searching...</span>
