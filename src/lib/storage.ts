@@ -2,7 +2,7 @@
 // Enables fast reload without re-processing all activities
 
 import { openDB, type IDBPDatabase } from "idb";
-import type { StoredState } from "../types";
+import type { StoredState, ProcessingConfig } from "../types";
 
 const DB_NAME = "StravaExplorationMap";
 const DB_VERSION = 2; // bumped: visitedCells now number[] (packed integers)

@@ -42,7 +42,8 @@ type CityProcessorResponse =
 	| {
 			type: "VIEWPORT_STATS";
 			payload: { percentage: number };
-	  };
+	  }
+	| { type: "ERROR"; payload: { message: string } };
 
 export class CityManager {
 	private worker: Worker;
@@ -55,18 +56,21 @@ export class CityManager {
 	private discoveryPromiseResolve?: (stats: CityStats[]) => void;
 	private viewportStatsResolve?: (percentage: number) => void;
 
-	constructor(visitedCells: Set<number>, cellSize: number, tilesBaseUrl?: string) {
+	constructor(visitedCells: Set<number>, cellSize: number, tilesBaseUrl?: string, worker?: Worker) {
 		this.visitedCells = visitedCells;
 		this.cellSize = cellSize;
 		this.tilesBaseUrl = tilesBaseUrl;
 
-		// Initialize the worker
-		this.worker = new Worker("/worker/city-processor.js", {
-			type: "module",
-		});
+		// Use provided worker or fall back to hardcoded URL
+		this.worker =
+			worker ??
+			new Worker("/worker/city-processor.js", {
+				type: "module",
+			});
 
 		this.worker.onmessage = (event: MessageEvent<CityProcessorResponse>) => {
 			const { type, payload } = event.data;
+			console.debug("[CityManager] received:", type);
 
 			switch (type) {
 				case "PROGRESS":
@@ -88,6 +92,11 @@ export class CityManager {
 					this.viewportStatsResolve?.(payload.percentage);
 					this.viewportStatsResolve = undefined;
 					break;
+				case "ERROR":
+					console.error("[CityManager] worker error:", payload.message);
+					break;
+				default:
+					console.warn("[CityManager] unknown message type:", (event.data as any)?.type);
 			}
 		};
 	}

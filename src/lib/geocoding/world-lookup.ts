@@ -19,6 +19,8 @@ interface LookupCacheDB extends DBSchema {
 
 let lookupDb: IDBPDatabase<LookupCacheDB> | null = null;
 const LOOKUP_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const NEGATIVE_CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes for "no city found" results
+let negativeCachePurged = false;
 
 async function getLookupDb(): Promise<IDBPDatabase<LookupCacheDB>> {
 	if (lookupDb) return lookupDb;
@@ -45,9 +47,11 @@ async function getCachedLookup(
 		const db = await getLookupDb();
 		const key = coordBucketKey(lat, lng);
 		const record = await db.get("lookupResults", key);
-		if (record && Date.now() - record.timestamp < LOOKUP_CACHE_MAX_AGE_MS) {
-			// Return the cached result (could be null if no city was found)
-			return record.result;
+		if (record) {
+			const maxAge = record.result === null ? NEGATIVE_CACHE_MAX_AGE_MS : LOOKUP_CACHE_MAX_AGE_MS;
+			if (Date.now() - record.timestamp < maxAge) {
+				return record.result;
+			}
 		}
 	} catch (e) {
 		console.warn("Failed to read lookup from cache:", e);
@@ -71,6 +75,37 @@ async function cacheLookupResult(
 		});
 	} catch (e) {
 		console.warn("Failed to cache lookup result:", e);
+	}
+}
+
+/**
+ * One-time purge of stale negative (null) lookup cache entries from IDB.
+ * Previous versions cached null results with a 30-day TTL, which poisons
+ * lookups when the failure was transient (network/CORS). This removes all
+ * null entries so they get re-queried fresh on the next lookup.
+ */
+async function purgeNegativeLookupCache(): Promise<void> {
+	if (negativeCachePurged) return;
+	negativeCachePurged = true;
+	try {
+		const db = await getLookupDb();
+		const tx = db.transaction("lookupResults", "readwrite");
+		const store = tx.objectStore("lookupResults");
+		let cursor = await store.openCursor();
+		let purged = 0;
+		while (cursor) {
+			if (cursor.value.result === null) {
+				await cursor.delete();
+				purged++;
+			}
+			cursor = await cursor.continue();
+		}
+		await tx.done;
+		if (purged > 0) {
+			console.log(`[WorldLookup] purged ${purged} stale negative cache entries from IDB`);
+		}
+	} catch (e) {
+		console.warn("[WorldLookup] failed to purge negative cache:", e);
 	}
 }
 
@@ -168,6 +203,8 @@ export class WorldLookup {
 		} else {
 			this.pmtiles = urlOrInstance;
 		}
+		// Fire-and-forget: purge stale null entries from previous 30-day cache policy
+		purgeNegativeLookupCache();
 	}
 
 	/**
@@ -182,13 +219,28 @@ export class WorldLookup {
 		// Check IndexedDB cache first
 		const cached = await getCachedLookup(lat, lng);
 		if (cached !== undefined) {
-			// Cache hit (could be null if we previously found no city)
+			if (cached !== null) {
+				console.log(
+					`[WorldLookup] cache hit for ${lat.toFixed(3)},${lng.toFixed(3)}: ${cached.name}`,
+				);
+			}
 			return cached;
 		}
 
+		console.log(
+			`[WorldLookup] cache miss, querying PMTiles for ${lat.toFixed(3)},${lng.toFixed(3)}`,
+		);
 		const result = await this.queryInternal(lat, lng);
 
-		// Cache the result (including null for "no city found")
+		if (result) {
+			console.log(
+				`[WorldLookup] found: ${result.name} (${result.osmId}) for ${lat.toFixed(3)},${lng.toFixed(3)}`,
+			);
+		} else {
+			console.log(`[WorldLookup] no result for ${lat.toFixed(3)},${lng.toFixed(3)}`);
+		}
+
+		// Cache the result (null results get a short TTL to avoid poisoning from transient failures)
 		await cacheLookupResult(lat, lng, result);
 
 		return result;
@@ -303,6 +355,7 @@ export class WorldLookup {
 		try {
 			const resp = await this.pmtiles.getZxy(zoom, x, y);
 			if (!resp || !resp.data) {
+				console.log(`[WorldLookup] no tile data for ${key}`);
 				this.tileCache.set(key, null);
 				return null;
 			}
@@ -312,7 +365,8 @@ export class WorldLookup {
 			this.tileCache.set(key, vt);
 			return vt;
 		} catch (e) {
-			console.warn(`WorldLookup: failed to fetch tile ${key}:`, e);
+			console.warn(`[WorldLookup] failed to fetch tile ${key}:`, e);
+			// Do NOT cache fetch failures — they may be transient network/CORS errors
 			return null;
 		}
 	}

@@ -431,6 +431,7 @@ class CityProcessor {
 	private visitedCells = new Set<number>();
 	private cellSize = 20;
 	private isProcessing = false;
+	private pendingDiscoveryActivities: StravaActivity[] | null = null;
 
 	// Discovery progress tracking (two phases: location discovery, then road cell computation)
 	private locationTotal = 0;
@@ -583,8 +584,13 @@ class CityProcessor {
 	}
 
 	private async discoverCitiesFromActivities(activities: StravaActivity[]) {
-		if (this.isProcessing) return;
+		if (this.isProcessing) {
+			this.pendingDiscoveryActivities = activities;
+			return;
+		}
 		this.isProcessing = true;
+
+		console.log("[city-worker] discoverCities: starting with", activities.length, "activities");
 
 		// Reset progress counters for both phases
 		this.locationTotal = 0;
@@ -594,6 +600,7 @@ class CityProcessor {
 
 		try {
 			const uniqueLocations = this.groupActivitiesByLocation(activities);
+			console.log("[city-worker] unique locations:", uniqueLocations.length);
 			this.locationTotal = uniqueLocations.length;
 
 			this.postProgress();
@@ -629,6 +636,7 @@ class CityProcessor {
 				}
 			}
 
+			console.log("[city-worker] discovery complete, cities found:", this.cities.size);
 			this.postStats("COMPLETE");
 
 			// Debug: log all StravaActivities processed, grouped by city
@@ -664,8 +672,14 @@ class CityProcessor {
 			}
 		} catch (e) {
 			console.error("City discovery failed in worker:", e);
+			self.postMessage({ type: "ERROR", payload: { message: String(e) } });
 		} finally {
 			this.isProcessing = false;
+			if (this.pendingDiscoveryActivities) {
+				const pending = this.pendingDiscoveryActivities;
+				this.pendingDiscoveryActivities = null;
+				this.discoverCitiesFromActivities(pending);
+			}
 		}
 	}
 
@@ -692,7 +706,12 @@ class CityProcessor {
 		try {
 			const result = await this.worldLookup.query(lat, lng);
 
-			if (!result || !result.osmId || !result.name) return;
+			if (!result || !result.osmId || !result.name) {
+				console.log("[city-worker] no city found at", lat, lng);
+				return;
+			}
+
+			console.log("[city-worker] identified city:", result.name, result.osmId);
 
 			// Use osmId as the unique city key (globally unique, stable)
 			const cityId = result.osmId;

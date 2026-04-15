@@ -32,14 +32,11 @@ interface WebhookEvent {
 }
 
 // Build at startup if not in production
+// In dev mode, Vite handles the frontend build and serving.
+// The Bun server only needs to handle API routes and serve workers.
+// In production, vite build outputs to dist/ which this server serves.
 if (!isProduction) {
-	console.log("⏳ Building project...");
-	try {
-		await import("../build");
-		console.log("✅ Build complete: ./dist ready to serve");
-	} catch (e) {
-		console.warn("⚠️  Build failed, will serve from public/ if available:", e);
-	}
+	console.log("ℹ️  Dev mode: Vite serves the frontend. This server handles API routes + workers.");
 }
 
 Bun.serve({

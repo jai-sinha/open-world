@@ -12,7 +12,8 @@
 		"isolatedModules": true,
 		"noEmit": true,
 		"allowSyntheticDefaultImports": true,
-		"types": ["bun-types"],
+		"jsx": "react-jsx",
+		"types": ["bun-types", "vite/client"],
 		"baseUrl": ".",
 		"paths": {
 			"@/*": ["./src/*"],
@@ -28,6 +29,6 @@
 		"sourceMap": true,
 		"incremental": true,
 	},
-	"include": ["src/**/*", "server/**/*", "build.ts"],
+	"include": ["src/**/*", "server/**/*", "build.ts", "vite.config.ts"],
 	"exclude": ["node_modules", "dist", "**/*.test.ts"],
 }
