@@ -37,7 +37,7 @@ export default function ProgressSection() {
 
 	return (
 		<div
-			className={`mx-3 mb-3 ${fading ? "opacity-0" : "opacity-100"}`}
+			className={`mx-1 mb-3 ${fading ? "opacity-0" : "opacity-100"}`}
 			style={{ transition: "opacity 0.5s ease-out" }}
 		>
 			<Card>

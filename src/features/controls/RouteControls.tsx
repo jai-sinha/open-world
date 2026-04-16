@@ -109,7 +109,7 @@ export default function RouteControls() {
 	}, [allActivities]);
 
 	return (
-		<Card className="mx-3 mb-3">
+		<Card className="mx-1 mb-3">
 			<Card.Header className="fw-semibold">Route Overlay</Card.Header>
 			<Card.Body>
 				{/* Toggle row */}

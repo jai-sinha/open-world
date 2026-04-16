@@ -8,7 +8,7 @@ export default function CityStats() {
 	const isDiscovering = cityDiscoveryProgress > 0 && cityDiscoveryProgress < 100;
 
 	return (
-		<Card className="mx-3 mb-3">
+		<Card className="mx-1 mb-3">
 			<Card.Header className="fw-semibold">Top Cities</Card.Header>
 			<Card.Body>
 				{isDiscovering && (

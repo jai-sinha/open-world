@@ -6,7 +6,7 @@ export default function AuthSection() {
 		useApp();
 
 	return (
-		<div className="p-3">
+		<div className="p-1 mb-2">
 			{!isAuthenticated ? (
 				<Button variant="primary" className="w-100" onClick={authorize}>
 					Connect Strava

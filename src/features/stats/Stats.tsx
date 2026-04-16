@@ -30,7 +30,7 @@ export default function Stats() {
 		stats.viewportExplored === -1 ? "Zoom in!" : stats.viewportExplored.toFixed(2) + "%";
 
 	return (
-		<Card className="mx-3 mb-3">
+		<Card className="mx-1 mb-3">
 			<Card.Header className="fw-semibold">Statistics</Card.Header>
 			<Card.Body>
 				<StatRow label="Cells Visited" value={stats.cells.toLocaleString()} />

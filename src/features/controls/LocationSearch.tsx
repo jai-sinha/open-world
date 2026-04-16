@@ -37,7 +37,7 @@ export default function LocationSearch() {
 	};
 
 	return (
-		<Card className="mx-3 mb-3">
+		<Card className="mx-1 mb-3 mt-1">
 			<Card.Header className="fw-semibold">Jump to Location</Card.Header>
 			<Card.Body>
 				<InputGroup>

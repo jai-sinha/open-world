@@ -29,7 +29,7 @@ export default function PrivacySettings() {
 	};
 
 	return (
-		<Card className="mx-3 mb-3">
+		<Card className="mx-1 mb-3">
 			<Card.Header className="fw-semibold">Privacy Settings</Card.Header>
 			<Card.Body>
 				<Form.Check
