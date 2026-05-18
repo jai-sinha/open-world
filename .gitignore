@@ -3,6 +3,10 @@ node_modules/
 
 dist/
 build/
-planet/
 
 .env
+
+# planet
+__pycache__/
+output/
+sources/
