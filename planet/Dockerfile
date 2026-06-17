@@ -4,8 +4,8 @@ FROM eclipse-temurin:21-jdk-jammy
 # osmctools contains osmconvert and osmfilter
 # awscli for S3 upload
 # osmium-tool for advanced PBF filtering/export
-# python3 for dataset build scripts
-# Go for the road-cell assignment hot path
+# python3 for boundary enrichment scripts (run_boundaries.sh)
+# Go native city_road_cells_assigner for the full dataset pipeline
 # build tools for tippecanoe
 RUN apt-get update && apt-get install -y \
 	wget \
@@ -42,7 +42,6 @@ RUN wget https://github.com/onthegomap/planetiler/releases/download/v0.9.3/plane
 # Copy the scripts
 COPY run_boundaries.sh /planetiler/run_boundaries.sh
 COPY run_city_dataset.sh /planetiler/run_city_dataset.sh
-COPY build_city_dataset.py /planetiler/build_city_dataset.py
 COPY regions.txt /planetiler/regions.txt
 COPY go.mod /planetiler/go.mod
 COPY cmd /planetiler/cmd
@@ -51,7 +50,6 @@ RUN cd /planetiler \
 	&& go build -o /planetiler/city_road_cells_assigner ./cmd/city_road_cells_assigner \
 	&& chmod +x /planetiler/run_boundaries.sh \
 	&& chmod +x /planetiler/run_city_dataset.sh \
-	&& chmod +x /planetiler/build_city_dataset.py \
 	&& chmod +x /planetiler/city_road_cells_assigner
 
 # Default command

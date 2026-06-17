@@ -17,7 +17,8 @@ set -euo pipefail
 #   - city-road-cells/<shard>/<city_id>.bin
 #   - region-build-metadata/<region>.json
 #
-# This script delegates the heavy lifting to build_city_dataset.py and handles:
+# This script delegates the heavy lifting to the native Go city_road_cells_assigner
+# binary and handles:
 #   - environment/config normalization
 #   - input validation
 #   - optional upload to R2
@@ -42,7 +43,8 @@ OUTPUT_DIR=${OUTPUT_DIR:-"/output"}
 CITIES_DIR=${CITIES_DIR:-"$OUTPUT_DIR/cities"}
 DATASET_DIR=${DATASET_DIR:-"$OUTPUT_DIR/city-dataset"}
 REGIONS_FILE=${REGIONS_FILE:-""}
-PYTHON_BIN=${PYTHON_BIN:-"python3"}
+ASSIGNER_BIN=${ASSIGNER_BIN:-"/planetiler/city_road_cells_assigner"}
+
 
 BUCKET_SIZE_DEG=${BUCKET_SIZE_DEG:-"0.25"}
 OUTLINE_TOLERANCE_DEG=${OUTLINE_TOLERANCE_DEG:-"0.0015"}
@@ -72,12 +74,18 @@ mkdir -p "$REGION_METADATA_DIR"
 # Tool checks
 # -----------------------------------------------------------------------------
 MISSING_TOOLS=0
-for tool in "$PYTHON_BIN" find sed awk date; do
+for tool in find sed awk date; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "❌ Required tool not found: $tool"
     MISSING_TOOLS=1
   fi
 done
+
+# Check the Go assigner binary separately (absolute path, not a PATH lookup)
+if [ ! -x "$ASSIGNER_BIN" ]; then
+  echo "❌ Required binary not found or not executable: $ASSIGNER_BIN"
+  MISSING_TOOLS=1
+fi
 
 if [ "$SKIP_ROAD_CELLS" != "1" ]; then
   for tool in osmium; do
@@ -159,8 +167,7 @@ echo "📦 Skip road cells:       $SKIP_ROAD_CELLS"
 # -----------------------------------------------------------------------------
 BUILD_START=$(date +%s)
 
-PY_ARGS=(
-  /planetiler/build_city_dataset.py
+GO_ARGS=(
   --cities-dir "$CITIES_DIR"
   --regions-file "$REGIONS_LIST_FILE"
   --sources-dir "$SOURCE_DIR"
@@ -174,14 +181,12 @@ PY_ARGS=(
 )
 
 if [ "$PRETTY_JSON" = "1" ]; then
-  PY_ARGS+=(--pretty)
+  GO_ARGS+=(--pretty)
 fi
 
 if [ "$SKIP_ROAD_CELLS" = "1" ]; then
-  PY_ARGS+=(--skip-road-cells)
+  GO_ARGS+=(--skip-road-cells)
 fi
-
-
 
 echo ""
 echo "Building city dataset artifacts..."
@@ -193,7 +198,7 @@ echo "  Outlines dir:        $OUTLINES_DIR"
 echo "  Region metadata dir: $REGION_METADATA_DIR"
 echo ""
 
-"$PYTHON_BIN" "${PY_ARGS[@]}"
+"$ASSIGNER_BIN" "${GO_ARGS[@]}"
 
 # -----------------------------------------------------------------------------
 # Validate expected outputs
