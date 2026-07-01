@@ -528,7 +528,7 @@ if missing_ids > 0:
   if [ "$INCREMENTAL" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
     SPLIT_FLAGS="--skip-existing"
   fi
-  if ! python3 /planetiler/split_cities.py $SPLIT_FLAGS "$GEOJSON_SEQ" "$OUTPUT_DIR/cities"; then
+  if ! /planetiler/cities_splitter $SPLIT_FLAGS "$GEOJSON_SEQ" "$OUTPUT_DIR/cities"; then
     echo "❌ Failed to split cities for $REGION_NAME"
     FAILED=$((FAILED+1))
     rm -f "$BOUNDARIES_PBF" "$CITIES_PBF"
@@ -594,20 +594,15 @@ TIPPECANOE_START=$(date +%s)
 #   --coalesce-densest-as-needed: Prefer coalescing over dropping
 #   --extend-zooms-if-still-dropping: Add zoom levels rather than drop features
 if ! tippecanoe -o "$WORLD_LOOKUP_PMTILES" \
-    --force \
-    --layer=cities \
-    --minimum-zoom=0 --maximum-zoom=12 \
-    --no-feature-limit \
-    --no-tile-size-limit \
-    --simplification=4 \
-    --detect-shared-borders \
-    --coalesce-densest-as-needed \
-    --extend-zooms-if-still-dropping \
-    --read-parallel \
-    "${GLOBAL_GEOJSON_FILES[@]}"; then
-  echo "❌ Failed to generate world-lookup.pmtiles"
-  exit 1
-fi
+	    --force \
+	    --layer=cities \
+	    --minimum-zoom=0 --maximum-zoom=12 \
+	    --simplification=4 \
+	    --detect-shared-borders \
+	    "${GLOBAL_GEOJSON_FILES[@]}"; then
+	  echo "❌ Failed to generate world-lookup.pmtiles"
+	  exit 1
+	fi
 
 TIPPECANOE_END=$(date +%s)
 TIPPECANOE_ELAPSED=$((TIPPECANOE_END - TIPPECANOE_START))

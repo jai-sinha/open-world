@@ -48,9 +48,11 @@ COPY cmd /planetiler/cmd
 
 RUN cd /planetiler \
 	&& go build -o /planetiler/city_road_cells_assigner ./cmd/city_road_cells_assigner \
+	&& go build -o /planetiler/cities_splitter ./cmd/cities_splitter \
 	&& chmod +x /planetiler/run_boundaries.sh \
 	&& chmod +x /planetiler/run_city_dataset.sh \
-	&& chmod +x /planetiler/city_road_cells_assigner
+	&& chmod +x /planetiler/city_road_cells_assigner \
+	&& chmod +x /planetiler/cities_splitter
 
 # Default command
 CMD ["/planetiler/run_city_dataset.sh"]

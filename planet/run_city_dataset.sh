@@ -188,6 +188,17 @@ if [ "$SKIP_ROAD_CELLS" = "1" ]; then
   GO_ARGS+=(--skip-road-cells)
 fi
 
+if [ "${RESUME:-0}" = "1" ]; then
+  GO_ARGS+=(--resume)
+fi
+
+if [ -n "${PARALLEL_REGIONS:-}" ]; then
+  echo "📦 Parallel regions:      $PARALLEL_REGIONS"
+  GO_ARGS+=(--parallel-regions "$PARALLEL_REGIONS")
+else
+  echo "📦 Parallel regions:      1 (default)"
+fi
+
 echo ""
 echo "Building city dataset artifacts..."
 echo "  Manifest path:       $MANIFEST_PATH"

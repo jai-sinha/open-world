@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -558,6 +559,29 @@ func buildPartitionBatch(line []byte, cellSize int, stripeWidth int) partitionBa
 }
 
 func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser, func() error, error) {
+	// If the PBF is already pre-filtered to highways only, skip tags-filter
+	// and go directly to add-locations-to-ways.
+	if strings.HasSuffix(sourcePbf, "-highways.osm.pbf") {
+		addArgs := []string{
+			"add-locations-to-ways",
+			"--no-progress",
+			"-F", "pbf",
+			"-i", "sparse_file_array",
+			"-f", "opl,locations_on_ways=true,add_metadata=false",
+			"-o", "-", sourcePbf,
+		}
+		addCmd := exec.Command("osmium", addArgs...)
+		addCmd.Stderr = os.Stderr
+		addStdout, err := addCmd.StdoutPipe()
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := addCmd.Start(); err != nil {
+			return nil, nil, err
+		}
+		return addStdout, addCmd.Wait, nil
+	}
+
 	tagsArgs := []string{"tags-filter", "--no-progress", "-f", "pbf", "-o", "-", "-t", sourcePbf}
 	for _, highway := range highwayValues {
 		tagsArgs = append(tagsArgs, "w/highway="+highway)
@@ -569,7 +593,7 @@ func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser,
 		"add-locations-to-ways",
 		"--no-progress",
 		"-F", "pbf",
-		"-i", "dense_mmap_array",
+		"-i", "sparse_file_array",
 		"-f", "opl,locations_on_ways=true,add_metadata=false",
 		"-o", "-", "-",
 	}

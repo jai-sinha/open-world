@@ -8,5 +8,5 @@ build/
 
 # planet
 __pycache__/
-output/
+*output/
 sources/

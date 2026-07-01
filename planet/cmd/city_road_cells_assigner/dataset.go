@@ -266,9 +266,7 @@ func buildCityRecord(
 
 	region := ""
 	if props != nil {
-		if v, ok := props["region"].(string); ok && strings.TrimSpace(v) != "" {
-			region = strings.TrimSpace(v)
-		} else if roadTiles, ok := props["road_tiles"].(string); ok && roadTiles != "" {
+		if roadTiles, ok := props["road_tiles"].(string); ok && roadTiles != "" {
 			base := filepath.Base(roadTiles)
 			base = strings.TrimSuffix(base, ".pmtiles")
 			if _, ok := regions[base]; ok {
@@ -767,6 +765,13 @@ func writeRegionMetadata(outputDir, regionName string, payload map[string]interf
 }
 
 func regionPbfPath(sourcesDir, regionName string) string {
+	// Prefer a pre-filtered highways-only PBF if available (~10x smaller).
+	// Create it with:
+	//   osmium tags-filter <region>-latest.osm.pbf w/highway=* -o <region>-highways.osm.pbf --overwrite
+	highwayPath := filepath.Join(sourcesDir, regionName+"-highways.osm.pbf")
+	if _, err := os.Stat(highwayPath); err == nil {
+		return highwayPath
+	}
 	return filepath.Join(sourcesDir, regionName+"-latest.osm.pbf")
 }
 

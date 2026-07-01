@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,7 +24,20 @@ type cliArgs struct {
 	discoveryIndexName  string
 	buildMetadataName   string
 	skipRoadCells       bool
+	parallelRegions     int
+	resume              bool
 	pretty              bool
+}
+
+type regionJob struct {
+	Name   string
+	Cities []*cityRecord
+}
+
+type regionResult struct {
+	Name string
+	Meta *regionResponse
+	Err  error
 }
 
 func parseArgs() cliArgs {
@@ -38,6 +53,8 @@ func parseArgs() cliArgs {
 	flag.StringVar(&args.discoveryIndexName, "discovery-index-name", "discovery-index.json", "Output discovery index filename.")
 	flag.StringVar(&args.buildMetadataName, "build-metadata-name", "build-metadata.json", "Output build metadata filename.")
 	flag.BoolVar(&args.skipRoadCells, "skip-road-cells", false, "Skip offline road-cell assignment.")
+	flag.IntVar(&args.parallelRegions, "parallel-regions", 1, "Number of regions to process simultaneously (default 1).")
+	flag.BoolVar(&args.resume, "resume", false, "Skip regions with existing metadata. Resumes a partial build.")
 	flag.BoolVar(&args.pretty, "pretty", false, "Pretty-print JSON outputs.")
 	flag.Parse()
 
@@ -164,28 +181,106 @@ func main() {
 		}
 		sort.Strings(regionNames)
 
+		// Build job list, handling resume skips inline
+		type pendingJob struct {
+			Name   string
+			Cities []*cityRecord
+		}
+		var pending []pendingJob
+
 		for _, regionName := range regionNames {
 			regionCities := citiesByRegion[regionName]
-			eprint("processing region", regionName, "("+fmt.Sprintf("%d", len(regionCities))+" cities)")
+
+			regionMetaPath := filepath.Join(args.outputDir, "region-build-metadata", regionName+".json")
+			if args.resume {
+				if data, err := os.ReadFile(regionMetaPath); err == nil {
+					var existingMeta regionResponse
+					if err := json.Unmarshal(data, &existingMeta); err == nil {
+						for _, city := range regionCities {
+							if stats, ok := existingMeta.Cities[city.cityID]; ok {
+								count := stats.AssignedRoadCells
+								city.totalRoadCells = &count
+							}
+						}
+						regionResponses = append(regionResponses, &existingMeta)
+						eprint("skipping region", regionName, "("+fmt.Sprintf("%d", len(regionCities))+" cities, already complete)")
+						continue
+					}
+				}
+				eprint("resuming region", regionName, "(no existing metadata found)")
+			}
 
 			sourcePbf := regionPbfPath(args.sourcesDir, regionName)
 			if _, err := os.Stat(sourcePbf); err != nil {
 				fatalf("error: source PBF not found for region %s: %s", regionName, sourcePbf)
 			}
 
-			regionStarted := time.Now()
-			regionMeta, err := processRegion(
-				regionName, sourcePbf, args.outputDir, args.citiesDir,
-				regionCities, args.cellSizeMeters, defaultStripeWidthCells, regionStarted,
-			)
-			if err != nil {
-				fatalf("error processing region %s: %v", regionName, err)
+			pending = append(pending, pendingJob{Name: regionName, Cities: regionCities})
+		}
+
+		// Process regions concurrently
+		maxWorkers := args.parallelRegions
+		if maxWorkers < 1 {
+			maxWorkers = 1
+		}
+		if maxWorkers > len(pending) {
+			maxWorkers = len(pending)
+		}
+
+		jobs := make(chan regionJob, len(pending))
+		results := make(chan regionResult, len(pending))
+		var wg sync.WaitGroup
+
+		for i := 0; i < maxWorkers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for job := range jobs {
+					eprint("processing region", job.Name, "("+fmt.Sprintf("%d", len(job.Cities))+" cities)")
+
+					sourcePbf := regionPbfPath(args.sourcesDir, job.Name)
+					regionStarted := time.Now()
+					meta, err := processRegion(
+						job.Name, sourcePbf, args.outputDir, args.citiesDir,
+						job.Cities, args.cellSizeMeters, defaultStripeWidthCells, regionStarted,
+					)
+					if err != nil {
+						results <- regionResult{Name: job.Name, Err: err}
+						continue
+					}
+					results <- regionResult{Name: job.Name, Meta: &meta}
+				}
+			}()
+		}
+
+		for _, pj := range pending {
+			jobs <- regionJob{Name: pj.Name, Cities: pj.Cities}
+		}
+		close(jobs)
+
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		var firstErr error
+		for res := range results {
+			if res.Err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("error processing region %s: %w", res.Name, res.Err)
+				}
+				continue
 			}
 
-			regionMetaMap := regionResponseToMap(&regionMeta)
+			sourcePbf := regionPbfPath(args.sourcesDir, res.Name)
+			regionMetaMap := regionResponseToMap(res.Meta)
 			regionMetaMap["sourcePbf"] = sourcePbf
-			writeRegionMetadata(args.outputDir, regionName, regionMetaMap, args.pretty)
-			regionResponses = append(regionResponses, &regionMeta)
+			writeRegionMetadata(args.outputDir, res.Name, regionMetaMap, args.pretty)
+			regionResponses = append(regionResponses, res.Meta)
+		}
+
+		if firstErr != nil {
+			fatalf("%v", firstErr)
 		}
 
 		if len(regionResponses) == 0 {

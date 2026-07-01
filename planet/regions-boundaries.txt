@@ -1,0 +1,7 @@
+australia-oceania||australia-oceania.pmtiles
+south-america||south-america.pmtiles
+africa||africa.pmtiles
+asia||asia.pmtiles
+europe||europe.pmtiles
+north-america||north-america.pmtiles
+central-america||central-america.pmtiles
