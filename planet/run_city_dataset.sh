@@ -111,13 +111,6 @@ if [ ! -d "$CITIES_DIR" ]; then
   exit 1
 fi
 
-CITY_COUNT=$(find "$CITIES_DIR" -type f -name '*.geojson' | wc -l | tr -d ' ')
-if [ "$CITY_COUNT" -eq 0 ]; then
-  echo "❌ No city GeoJSON files found in $CITIES_DIR"
-  echo "   Run the boundary pipeline first."
-  exit 1
-fi
-
 REGIONS_LIST_FILE="$WORK_DIR/regions_to_process.txt"
 if [ -n "$REGIONS_FILE" ] && [ -f "$REGIONS_FILE" ]; then
   echo "Using provided regions file: $REGIONS_FILE"
@@ -155,12 +148,6 @@ echo "📦 Input cities dir:      $CITIES_DIR"
 echo "📦 Source PBF dir:        $SOURCE_DIR"
 echo "📦 Output dataset dir:    $DATASET_DIR"
 echo "📦 Regions file:          $REGIONS_LIST_FILE"
-echo "📦 City files found:      $CITY_COUNT"
-echo "📦 Regions listed:        $REGION_COUNT"
-echo "📦 Bucket size:           ${BUCKET_SIZE_DEG}°"
-echo "📦 Outline tolerance:     ${OUTLINE_TOLERANCE_DEG}°"
-echo "📦 Cell size:             ${CELL_SIZE_METERS}m"
-echo "📦 Skip road cells:       $SKIP_ROAD_CELLS"
 
 # -----------------------------------------------------------------------------
 # Build dataset
@@ -190,13 +177,6 @@ fi
 
 if [ "${RESUME:-0}" = "1" ]; then
   GO_ARGS+=(--resume)
-fi
-
-if [ -n "${PARALLEL_REGIONS:-}" ]; then
-  echo "📦 Parallel regions:      $PARALLEL_REGIONS"
-  GO_ARGS+=(--parallel-regions "$PARALLEL_REGIONS")
-else
-  echo "📦 Parallel regions:      1 (default)"
 fi
 
 echo ""
@@ -306,7 +286,6 @@ fi
 echo ""
 echo "========================================"
 echo "✅ City dataset pipeline complete"
-echo "   Input cities:         $CITY_COUNT"
 echo "   Regions listed:       $REGION_COUNT"
 echo "   Road cell blobs:      $ROAD_CELL_FILE_COUNT"
 echo "   Output dataset dir:   $DATASET_DIR"

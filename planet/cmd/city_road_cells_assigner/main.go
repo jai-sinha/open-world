@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -24,20 +23,8 @@ type cliArgs struct {
 	discoveryIndexName  string
 	buildMetadataName   string
 	skipRoadCells       bool
-	parallelRegions     int
 	resume              bool
 	pretty              bool
-}
-
-type regionJob struct {
-	Name   string
-	Cities []*cityRecord
-}
-
-type regionResult struct {
-	Name string
-	Meta *regionResponse
-	Err  error
 }
 
 func parseArgs() cliArgs {
@@ -53,7 +40,6 @@ func parseArgs() cliArgs {
 	flag.StringVar(&args.discoveryIndexName, "discovery-index-name", "discovery-index.json", "Output discovery index filename.")
 	flag.StringVar(&args.buildMetadataName, "build-metadata-name", "build-metadata.json", "Output build metadata filename.")
 	flag.BoolVar(&args.skipRoadCells, "skip-road-cells", false, "Skip offline road-cell assignment.")
-	flag.IntVar(&args.parallelRegions, "parallel-regions", 1, "Number of regions to process simultaneously (default 1).")
 	flag.BoolVar(&args.resume, "resume", false, "Skip regions with existing metadata. Resumes a partial build.")
 	flag.BoolVar(&args.pretty, "pretty", false, "Pretty-print JSON outputs.")
 	flag.Parse()
@@ -218,65 +204,26 @@ func main() {
 			pending = append(pending, pendingJob{Name: regionName, Cities: regionCities})
 		}
 
-		// Process regions concurrently
-		maxWorkers := args.parallelRegions
-		if maxWorkers < 1 {
-			maxWorkers = 1
-		}
-		if maxWorkers > len(pending) {
-			maxWorkers = len(pending)
-		}
-
-		jobs := make(chan regionJob, len(pending))
-		results := make(chan regionResult, len(pending))
-		var wg sync.WaitGroup
-
-		for i := 0; i < maxWorkers; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for job := range jobs {
-					eprint("processing region", job.Name, "("+fmt.Sprintf("%d", len(job.Cities))+" cities)")
-
-					sourcePbf := regionPbfPath(args.sourcesDir, job.Name)
-					regionStarted := time.Now()
-					meta, err := processRegion(
-						job.Name, sourcePbf, args.outputDir, args.citiesDir,
-						job.Cities, args.cellSizeMeters, defaultStripeWidthCells, regionStarted,
-					)
-					if err != nil {
-						results <- regionResult{Name: job.Name, Err: err}
-						continue
-					}
-					results <- regionResult{Name: job.Name, Meta: &meta}
-				}
-			}()
-		}
-
-		for _, pj := range pending {
-			jobs <- regionJob{Name: pj.Name, Cities: pj.Cities}
-		}
-		close(jobs)
-
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-
+		// Process regions sequentially
 		var firstErr error
-		for res := range results {
-			if res.Err != nil {
-				if firstErr == nil {
-					firstErr = fmt.Errorf("error processing region %s: %w", res.Name, res.Err)
-				}
-				continue
+		for _, pj := range pending {
+			eprint("processing region", pj.Name, "("+fmt.Sprintf("%d", len(pj.Cities))+" cities)")
+
+			sourcePbf := regionPbfPath(args.sourcesDir, pj.Name)
+			regionStarted := time.Now()
+			meta, err := processRegion(
+				pj.Name, sourcePbf, args.outputDir, args.citiesDir,
+				pj.Cities, args.cellSizeMeters, defaultStripeWidthCells, regionStarted,
+			)
+			if err != nil {
+				firstErr = fmt.Errorf("error processing region %s: %w", pj.Name, err)
+				break
 			}
 
-			sourcePbf := regionPbfPath(args.sourcesDir, res.Name)
-			regionMetaMap := regionResponseToMap(res.Meta)
+			regionMetaMap := regionResponseToMap(&meta)
 			regionMetaMap["sourcePbf"] = sourcePbf
-			writeRegionMetadata(args.outputDir, res.Name, regionMetaMap, args.pretty)
-			regionResponses = append(regionResponses, res.Meta)
+			writeRegionMetadata(args.outputDir, pj.Name, regionMetaMap, args.pretty)
+			regionResponses = append(regionResponses, &meta)
 		}
 
 		if firstErr != nil {

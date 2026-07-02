@@ -559,27 +559,63 @@ func buildPartitionBatch(line []byte, cellSize int, stripeWidth int) partitionBa
 }
 
 func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser, func() error, error) {
-	// If the PBF is already pre-filtered to highways only, skip tags-filter
-	// and go directly to add-locations-to-ways.
 	if strings.HasSuffix(sourcePbf, "-highways.osm.pbf") {
+		// Pre-filtered highways PBF: renumber first so dense_file_array is compact.
+		renumberArgs := []string{
+			"renumber", "--no-progress",
+			"-F", "pbf", "-f", "pbf",
+			"-o", "-", sourcePbf,
+		}
+		renumberCmd := exec.Command("osmium", renumberArgs...)
+		renumberCmd.Stderr = os.Stderr
+		renumberStdout, err := renumberCmd.StdoutPipe()
+		if err != nil {
+			return nil, nil, err
+		}
+
 		addArgs := []string{
 			"add-locations-to-ways",
 			"--no-progress",
 			"-F", "pbf",
-			"-i", "sparse_file_array",
+			"-i", "dense_file_array",
 			"-f", "opl,locations_on_ways=true,add_metadata=false",
-			"-o", "-", sourcePbf,
+			"-o", "-", "-",
 		}
 		addCmd := exec.Command("osmium", addArgs...)
 		addCmd.Stderr = os.Stderr
+		addCmd.Stdin = renumberStdout
 		addStdout, err := addCmd.StdoutPipe()
 		if err != nil {
+			_ = renumberCmd.Process.Kill()
+			_ = renumberCmd.Wait()
 			return nil, nil, err
 		}
+
 		if err := addCmd.Start(); err != nil {
+			_ = renumberCmd.Process.Kill()
+			_ = renumberCmd.Wait()
 			return nil, nil, err
 		}
-		return addStdout, addCmd.Wait, nil
+		if err := renumberCmd.Start(); err != nil {
+			_ = addCmd.Process.Kill()
+			_, _ = io.Copy(io.Discard, addStdout)
+			_ = addCmd.Wait()
+			return nil, nil, err
+		}
+
+		waitFn := func() error {
+			renumErr := renumberCmd.Wait()
+			addErr := addCmd.Wait()
+			if renumErr != nil {
+				return fmt.Errorf("osmium renumber failed: %w", renumErr)
+			}
+			if addErr != nil {
+				return fmt.Errorf("osmium add-locations-to-ways failed: %w", addErr)
+			}
+			return nil
+		}
+
+		return addStdout, waitFn, nil
 	}
 
 	tagsArgs := []string{"tags-filter", "--no-progress", "-f", "pbf", "-o", "-", "-t", sourcePbf}
@@ -589,11 +625,19 @@ func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser,
 	tagsCmd := exec.Command("osmium", tagsArgs...)
 	tagsCmd.Stderr = os.Stderr
 
+	renumberArgs := []string{
+		"renumber", "--no-progress",
+		"-F", "pbf", "-f", "pbf",
+		"-o", "-", "-",
+	}
+	renumberCmd := exec.Command("osmium", renumberArgs...)
+	renumberCmd.Stderr = os.Stderr
+
 	addArgs := []string{
 		"add-locations-to-ways",
 		"--no-progress",
 		"-F", "pbf",
-		"-i", "sparse_file_array",
+		"-i", "dense_file_array",
 		"-f", "opl,locations_on_ways=true,add_metadata=false",
 		"-o", "-", "-",
 	}
@@ -604,7 +648,12 @@ func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser,
 	if err != nil {
 		return nil, nil, err
 	}
-	addCmd.Stdin = tagsStdout
+	renumberCmd.Stdin = tagsStdout
+	renumberStdout, err := renumberCmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	addCmd.Stdin = renumberStdout
 	addStdout, err := addCmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, err
@@ -613,7 +662,16 @@ func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser,
 	if err := addCmd.Start(); err != nil {
 		return nil, nil, err
 	}
+	if err := renumberCmd.Start(); err != nil {
+		_ = addCmd.Process.Kill()
+		_, _ = io.Copy(io.Discard, addStdout)
+		_ = addCmd.Wait()
+		return nil, nil, err
+	}
 	if err := tagsCmd.Start(); err != nil {
+		_ = renumberCmd.Process.Kill()
+		_, _ = io.Copy(io.Discard, renumberStdout)
+		_ = renumberCmd.Wait()
 		_ = addCmd.Process.Kill()
 		_, _ = io.Copy(io.Discard, addStdout)
 		_ = addCmd.Wait()
@@ -622,12 +680,16 @@ func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser,
 
 	waitFn := func() error {
 		addErr := addCmd.Wait()
+		renumErr := renumberCmd.Wait()
 		tagsErr := tagsCmd.Wait()
-		if addErr != nil {
-			return fmt.Errorf("osmium add-locations-to-ways failed: %w", addErr)
-		}
 		if tagsErr != nil {
 			return fmt.Errorf("osmium tags-filter failed: %w", tagsErr)
+		}
+		if renumErr != nil {
+			return fmt.Errorf("osmium renumber failed: %w", renumErr)
+		}
+		if addErr != nil {
+			return fmt.Errorf("osmium add-locations-to-ways failed: %w", addErr)
 		}
 		return nil
 	}
