@@ -244,6 +244,7 @@ func buildCityRecord(
 	feat *feature,
 	citiesDir string,
 	regions map[string]struct{},
+	regionSplits map[string]*regionSplit,
 	cellSize int,
 ) (*cityRecord, error) {
 	computedBbox, err := computeBboxFromFeature(feat)
@@ -271,6 +272,13 @@ func buildCityRecord(
 			base = strings.TrimSuffix(base, ".pmtiles")
 			if _, ok := regions[base]; ok {
 				region = base
+			} else if split, ok := regionSplits[base]; ok {
+				// Parent region was split into sub-regions.
+				// Find the correct sub-region from the city's bbox.
+				subRegion := resolveSubRegionForBbox(split, *computedBbox)
+				if _, ok := regions[subRegion]; ok {
+					region = subRegion
+				}
 			}
 		}
 	}
@@ -610,7 +618,7 @@ func buildManifest(
 
 	return map[string]interface{}{
 		"version":   2,
-		"generator": "build_city_dataset.py",
+		"generator": "city_road_cells_assigner",
 		"schema": map[string]interface{}{
 			"cityRoadCells":  "xy-int32-pairs-v1",
 			"discoveryIndex": "bbox-bucket-candidates",
@@ -650,7 +658,7 @@ func buildDiscoveryIndex(cities []*cityRecord, bucketSize float64) map[string]in
 
 	return map[string]interface{}{
 		"version":       1,
-		"generator":     "build_city_dataset.py",
+		"generator":     "city_road_cells_assigner",
 		"strategy":      "bbox-bucket-candidates",
 		"bucketSizeDeg": bucketSize,
 		"bucketCount":   len(buckets),
@@ -700,13 +708,12 @@ func buildBuildMetadata(
 
 	return map[string]interface{}{
 		"version":        2,
-		"generator":      "build_city_dataset.py",
+		"generator":      "city_road_cells_assigner",
 		"generatedAtUtc": nowUTCISO(),
 		"inputs": map[string]interface{}{
 			"citiesDir":           absCitiesDir,
 			"regionsFile":         absRegionsFile,
 			"sourcesDir":          absSourcesDir,
-			"roadsCacheDir":       "",
 			"cellSizeMeters":      cellSize,
 			"bucketSizeDeg":       bucketSize,
 			"outlineToleranceDeg": tolerance,
@@ -771,6 +778,12 @@ func regionPbfPath(sourcesDir, regionName string) string {
 	highwayPath := filepath.Join(sourcesDir, regionName+"-highways.osm.pbf")
 	if _, err := os.Stat(highwayPath); err == nil {
 		return highwayPath
+	}
+	// Also try just <name>.osm.pbf (e.g. for split sub-regions where the
+	// file was produced by osmium extract and doesn't carry the -highways suffix).
+	plainPath := filepath.Join(sourcesDir, regionName+".osm.pbf")
+	if _, err := os.Stat(plainPath); err == nil {
+		return plainPath
 	}
 	return filepath.Join(sourcesDir, regionName+"-latest.osm.pbf")
 }

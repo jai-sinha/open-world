@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"math"
 	"os"
+	"strconv"
+	"strings"
 )
 
 const (
@@ -144,6 +146,88 @@ type cityStats struct {
 	CandidateCellsInBBox int    `json:"candidateCellsInBbox"`
 	AssignedRoadCells    int    `json:"assignedRoadCells"`
 	RoadCellsPath        string `json:"roadCellsPath"`
+}
+
+type subRegionDef struct {
+	Name   string
+	MinLon float64
+	MinLat float64
+	MaxLon float64
+	MaxLat float64
+}
+
+type regionSplit struct {
+	Parent     string
+	SubRegions []subRegionDef
+}
+
+func parseRegionSplits(s string) map[string]*regionSplit {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	parent := parts[0]
+	rest := parts[1]
+	if parent == "" || rest == "" {
+		return nil
+	}
+
+	rs := &regionSplit{Parent: parent}
+	for _, subPart := range strings.Split(rest, ";") {
+		subPart = strings.TrimSpace(subPart)
+		if subPart == "" {
+			continue
+		}
+		fields := strings.Split(subPart, ",")
+		if len(fields) != 5 {
+			continue
+		}
+		minLon, _ := strconv.ParseFloat(strings.TrimSpace(fields[1]), 64)
+		minLat, _ := strconv.ParseFloat(strings.TrimSpace(fields[2]), 64)
+		maxLon, _ := strconv.ParseFloat(strings.TrimSpace(fields[3]), 64)
+		maxLat, _ := strconv.ParseFloat(strings.TrimSpace(fields[4]), 64)
+		rs.SubRegions = append(rs.SubRegions, subRegionDef{
+			Name:   strings.TrimSpace(fields[0]),
+			MinLon: minLon,
+			MinLat: minLat,
+			MaxLon: maxLon,
+			MaxLat: maxLat,
+		})
+	}
+
+	if len(rs.SubRegions) == 0 {
+		return nil
+	}
+
+	splits := make(map[string]*regionSplit)
+	splits[parent] = rs
+	return splits
+}
+
+func resolveSubRegionForBbox(split *regionSplit, box bbox) string {
+	centerLon := (box.MinLng + box.MaxLng) / 2
+	centerLat := (box.MinLat + box.MaxLat) / 2
+
+	for _, sub := range split.SubRegions {
+		if sub.MinLon <= centerLon && centerLon < sub.MaxLon &&
+			sub.MinLat <= centerLat && centerLat < sub.MaxLat {
+			return sub.Name
+		}
+	}
+
+	// Fallback: nearest sub-region center
+	best := ""
+	bestDist := math.MaxFloat64
+	for _, sub := range split.SubRegions {
+		sLon := (sub.MinLon + sub.MaxLon) / 2
+		sLat := (sub.MinLat + sub.MaxLat) / 2
+		dist := (centerLon-sLon)*(centerLon-sLon) + (centerLat-sLat)*(centerLat-sLat)
+		if dist < bestDist {
+			bestDist = dist
+			best = sub.Name
+		}
+	}
+	return best
 }
 
 type regionResponse struct {

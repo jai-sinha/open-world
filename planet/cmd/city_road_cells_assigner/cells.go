@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -14,8 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -34,6 +31,12 @@ func processRegion(
 	if err != nil {
 		return regionResponse{}, err
 	}
+
+	// City boundary GeoJSON parsing creates a lot of transient interface{} allocations.
+	// Force GC now so memory is returned to the OS before the osmium/osmpbf phase.
+	runtime.GC()
+
+	logf("  loaded %d city boundaries, starting PBF processing...", len(boundaries))
 
 	response, err := assignRegionCells(
 		regionName, sourcePbf, outputDir, defaultHighwayValues,
@@ -427,9 +430,18 @@ func processStripe(
 	return result
 }
 
+type nodeLoc struct {
+	Lat float32
+	Lon float32
+}
+
+type wayJob struct {
+	NodeIDs []int64
+}
+
 func partitionRoadSegmentsToStripes(
 	sourcePbf string,
-	highwayValues []string,
+	_highwayValues []string,
 	cellSize int,
 	stripesDir string,
 	stripeWidth int,
@@ -438,49 +450,65 @@ func partitionRoadSegmentsToStripes(
 		return stripePartition{}, err
 	}
 
-	stream, waitFn, err := openRoadWayStream(sourcePbf, highwayValues)
+	// Phase 1: get node count from source PBF (no locations array yet).
+	nodeCount, err := pbfNodeCount(sourcePbf)
 	if err != nil {
-		return stripePartition{}, err
+		return stripePartition{}, fmt.Errorf("get node count: %w", err)
 	}
-	defer stream.Close()
+	logf("  source has %d nodes", nodeCount)
+
+	// Phase 2: renumber to a temp file. Osmium builds its ID mapping
+	// WITHOUT the 1.5GB locations array live (it's not allocated yet).
+	renumberedPbf := filepath.Join(filepath.Dir(stripesDir), "renumbered.pbf")
+	logf("  renumbering...")
+	renumberCmd := exec.Command("osmium", "renumber", "--no-progress",
+		"-F", "pbf", "-f", "pbf",
+		"-o", renumberedPbf, sourcePbf)
+	renumberCmd.Stderr = os.Stderr
+	if err := renumberCmd.Run(); err != nil {
+		return stripePartition{}, fmt.Errorf("osmium renumber: %w", err)
+	}
+	logf("  renumbering done")
+
+	// Phase 3: pre-allocate locations array (osmium is done, memory freed).
+	locations := make([]nodeLoc, nodeCount)
+
+	// Phase 4: open the renumbered file and read it directly.
+	f, err := os.Open(renumberedPbf)
+	if err != nil {
+		return stripePartition{}, fmt.Errorf("open renumbered: %w", err)
+	}
+	defer f.Close()
+
+	pipeReader := bufio.NewReaderSize(f, 1<<25) // 32MB buffer
 
 	writerCache := newStripeWriterCache(stripesDir, maxOpenStripeWriters)
 	defer writerCache.Close()
 
+	// Start workers before reading — they block on the jobs channel until ways arrive.
 	workerCount := runtime.NumCPU()
 	if workerCount < 1 {
 		workerCount = 1
 	}
-
-	jobs := make(chan []byte, workerCount*2)
-	results := make(chan partitionBatch, workerCount*2)
-	scanErrCh := make(chan error, 1)
+	jobs := make(chan wayJob, workerCount*4)
+	results := make(chan partitionBatch, workerCount*4)
+	decodeErrCh := make(chan error, 1)
 
 	var wg sync.WaitGroup
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for line := range jobs {
-				results <- buildPartitionBatch(line, cellSize, stripeWidth)
+			for job := range jobs {
+				results <- processWay(job, locations, cellSize, stripeWidth)
 			}
 		}()
 	}
 
-	go func() {
-		scanner := bufio.NewScanner(stream)
-		buffer := make([]byte, 0, 1<<20)
-		scanner.Buffer(buffer, 128<<20)
-		for scanner.Scan() {
-			line := bytes.TrimSpace(scanner.Bytes())
-			if len(line) == 0 {
-				continue
-			}
-			jobs <- append([]byte(nil), line...)
-		}
-		close(jobs)
-		scanErrCh <- scanner.Err()
-	}()
+	// Background goroutine reads the renumbered PBF stream directly,
+	// extracting node locations into the pre-allocated array and sending
+	// each decoded way to the worker pool. No per-Node allocations.
+	go readRenumberedPBF(pipeReader, locations, jobs, decodeErrCh)
 
 	go func() {
 		wg.Wait()
@@ -512,11 +540,8 @@ func partitionRoadSegmentsToStripes(
 		}
 	}
 
-	if scanErr := <-scanErrCh; scanErr != nil && firstErr == nil {
-		firstErr = scanErr
-	}
-	if waitErr := waitFn(); waitErr != nil && firstErr == nil {
-		firstErr = waitErr
+	if decodeErr := <-decodeErrCh; decodeErr != nil && firstErr == nil {
+		firstErr = decodeErr
 	}
 	if closeErr := writerCache.Close(); closeErr != nil && firstErr == nil {
 		firstErr = closeErr
@@ -531,17 +556,23 @@ func partitionRoadSegmentsToStripes(
 	}, nil
 }
 
-func buildPartitionBatch(line []byte, cellSize int, stripeWidth int) partitionBatch {
-	if len(line) == 0 || line[0] != 'w' {
-		return partitionBatch{}
+func processWay(
+	job wayJob,
+	locations []nodeLoc,
+	cellSize int,
+	stripeWidth int,
+) partitionBatch {
+	if len(job.NodeIDs) < 2 {
+		return partitionBatch{FeatureCount: 1}
 	}
 
-	segments, err := parseOPLWaySegments(line)
-	if err != nil {
-		return partitionBatch{Err: err}
-	}
-	if len(segments) == 0 {
-		return partitionBatch{FeatureCount: 1}
+	segments := make([]segment, 0, len(job.NodeIDs)-1)
+	for i := 0; i < len(job.NodeIDs)-1; i++ {
+		n1 := locations[job.NodeIDs[i]-1]
+		n2 := locations[job.NodeIDs[i+1]-1]
+		x1, y1 := latLngToMeters(float64(n1.Lat), float64(n1.Lon))
+		x2, y2 := latLngToMeters(float64(n2.Lat), float64(n2.Lon))
+		segments = append(segments, segment{X1: x1, Y1: y1, X2: x2, Y2: y2})
 	}
 
 	stripeSegments := make(map[int][]segment)
@@ -556,217 +587,6 @@ func buildPartitionBatch(line []byte, cellSize int, stripeWidth int) partitionBa
 	}
 
 	return partitionBatch{StripeSegments: stripeSegments, FeatureCount: 1}
-}
-
-func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser, func() error, error) {
-	if strings.HasSuffix(sourcePbf, "-highways.osm.pbf") {
-		// Pre-filtered highways PBF: renumber first so dense_file_array is compact.
-		renumberArgs := []string{
-			"renumber", "--no-progress",
-			"-F", "pbf", "-f", "pbf",
-			"-o", "-", sourcePbf,
-		}
-		renumberCmd := exec.Command("osmium", renumberArgs...)
-		renumberCmd.Stderr = os.Stderr
-		renumberStdout, err := renumberCmd.StdoutPipe()
-		if err != nil {
-			return nil, nil, err
-		}
-
-		addArgs := []string{
-			"add-locations-to-ways",
-			"--no-progress",
-			"-F", "pbf",
-			"-i", "dense_file_array",
-			"-f", "opl,locations_on_ways=true,add_metadata=false",
-			"-o", "-", "-",
-		}
-		addCmd := exec.Command("osmium", addArgs...)
-		addCmd.Stderr = os.Stderr
-		addCmd.Stdin = renumberStdout
-		addStdout, err := addCmd.StdoutPipe()
-		if err != nil {
-			_ = renumberCmd.Process.Kill()
-			_ = renumberCmd.Wait()
-			return nil, nil, err
-		}
-
-		if err := addCmd.Start(); err != nil {
-			_ = renumberCmd.Process.Kill()
-			_ = renumberCmd.Wait()
-			return nil, nil, err
-		}
-		if err := renumberCmd.Start(); err != nil {
-			_ = addCmd.Process.Kill()
-			_, _ = io.Copy(io.Discard, addStdout)
-			_ = addCmd.Wait()
-			return nil, nil, err
-		}
-
-		waitFn := func() error {
-			renumErr := renumberCmd.Wait()
-			addErr := addCmd.Wait()
-			if renumErr != nil {
-				return fmt.Errorf("osmium renumber failed: %w", renumErr)
-			}
-			if addErr != nil {
-				return fmt.Errorf("osmium add-locations-to-ways failed: %w", addErr)
-			}
-			return nil
-		}
-
-		return addStdout, waitFn, nil
-	}
-
-	tagsArgs := []string{"tags-filter", "--no-progress", "-f", "pbf", "-o", "-", "-t", sourcePbf}
-	for _, highway := range highwayValues {
-		tagsArgs = append(tagsArgs, "w/highway="+highway)
-	}
-	tagsCmd := exec.Command("osmium", tagsArgs...)
-	tagsCmd.Stderr = os.Stderr
-
-	renumberArgs := []string{
-		"renumber", "--no-progress",
-		"-F", "pbf", "-f", "pbf",
-		"-o", "-", "-",
-	}
-	renumberCmd := exec.Command("osmium", renumberArgs...)
-	renumberCmd.Stderr = os.Stderr
-
-	addArgs := []string{
-		"add-locations-to-ways",
-		"--no-progress",
-		"-F", "pbf",
-		"-i", "dense_file_array",
-		"-f", "opl,locations_on_ways=true,add_metadata=false",
-		"-o", "-", "-",
-	}
-	addCmd := exec.Command("osmium", addArgs...)
-	addCmd.Stderr = os.Stderr
-
-	tagsStdout, err := tagsCmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	renumberCmd.Stdin = tagsStdout
-	renumberStdout, err := renumberCmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	addCmd.Stdin = renumberStdout
-	addStdout, err := addCmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if err := addCmd.Start(); err != nil {
-		return nil, nil, err
-	}
-	if err := renumberCmd.Start(); err != nil {
-		_ = addCmd.Process.Kill()
-		_, _ = io.Copy(io.Discard, addStdout)
-		_ = addCmd.Wait()
-		return nil, nil, err
-	}
-	if err := tagsCmd.Start(); err != nil {
-		_ = renumberCmd.Process.Kill()
-		_, _ = io.Copy(io.Discard, renumberStdout)
-		_ = renumberCmd.Wait()
-		_ = addCmd.Process.Kill()
-		_, _ = io.Copy(io.Discard, addStdout)
-		_ = addCmd.Wait()
-		return nil, nil, err
-	}
-
-	waitFn := func() error {
-		addErr := addCmd.Wait()
-		renumErr := renumberCmd.Wait()
-		tagsErr := tagsCmd.Wait()
-		if tagsErr != nil {
-			return fmt.Errorf("osmium tags-filter failed: %w", tagsErr)
-		}
-		if renumErr != nil {
-			return fmt.Errorf("osmium renumber failed: %w", renumErr)
-		}
-		if addErr != nil {
-			return fmt.Errorf("osmium add-locations-to-ways failed: %w", addErr)
-		}
-		return nil
-	}
-
-	return addStdout, waitFn, nil
-}
-
-func parseOPLWaySegments(line []byte) ([]segment, error) {
-	fields := bytes.Fields(line)
-	if len(fields) == 0 || len(fields[0]) == 0 || fields[0][0] != 'w' {
-		return nil, nil
-	}
-
-	var nodeField []byte
-	for _, field := range fields[1:] {
-		if len(field) > 0 && field[0] == 'N' {
-			nodeField = field[1:]
-			break
-		}
-	}
-	if len(nodeField) == 0 {
-		return nil, nil
-	}
-
-	entries := bytes.Split(nodeField, []byte{','})
-	points := make([]meterPoint, 0, len(entries))
-	for _, entry := range entries {
-		point, ok, err := parseOPLNodeLocation(entry)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			points = append(points, point)
-		}
-	}
-	if len(points) < 2 {
-		return nil, nil
-	}
-
-	segments := make([]segment, 0, len(points)-1)
-	prev := points[0]
-	for _, cur := range points[1:] {
-		segments = append(segments, segment{X1: prev.X, Y1: prev.Y, X2: cur.X, Y2: cur.Y})
-		prev = cur
-	}
-	return segments, nil
-}
-
-func parseOPLNodeLocation(entry []byte) (meterPoint, bool, error) {
-	entry = bytes.TrimSpace(entry)
-	if len(entry) == 0 {
-		return meterPoint{}, false, nil
-	}
-	xPos := bytes.IndexByte(entry, 'x')
-	if xPos < 0 {
-		return meterPoint{}, false, nil
-	}
-	yPosRel := bytes.IndexByte(entry[xPos+1:], 'y')
-	if yPosRel < 0 {
-		return meterPoint{}, false, nil
-	}
-	yPos := xPos + 1 + yPosRel
-	if yPos <= xPos+1 || yPos+1 >= len(entry) {
-		return meterPoint{}, false, fmt.Errorf("invalid OPL node location: %q", entry)
-	}
-
-	lng, err := strconv.ParseFloat(string(entry[xPos+1:yPos]), 64)
-	if err != nil {
-		return meterPoint{}, false, fmt.Errorf("parse OPL longitude %q: %w", entry, err)
-	}
-	lat, err := strconv.ParseFloat(string(entry[yPos+1:]), 64)
-	if err != nil {
-		return meterPoint{}, false, fmt.Errorf("parse OPL latitude %q: %w", entry, err)
-	}
-
-	x, y := latLngToMeters(lat, lng)
-	return meterPoint{X: x, Y: y}, true, nil
 }
 
 func newStripeWriterCache(dir string, maxOpen int) *stripeWriterCache {
@@ -1161,6 +981,7 @@ func roundSeconds(value float64) float64 {
 
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Stderr.Sync()
 }
 
 func fatalf(format string, args ...any) {

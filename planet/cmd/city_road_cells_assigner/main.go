@@ -22,6 +22,7 @@ type cliArgs struct {
 	manifestName        string
 	discoveryIndexName  string
 	buildMetadataName   string
+	regionSplits        string
 	skipRoadCells       bool
 	resume              bool
 	pretty              bool
@@ -39,6 +40,7 @@ func parseArgs() cliArgs {
 	flag.StringVar(&args.manifestName, "manifest-name", "cities-manifest.json", "Output manifest filename.")
 	flag.StringVar(&args.discoveryIndexName, "discovery-index-name", "discovery-index.json", "Output discovery index filename.")
 	flag.StringVar(&args.buildMetadataName, "build-metadata-name", "build-metadata.json", "Output build metadata filename.")
+	flag.StringVar(&args.regionSplits, "region-splits", "", "Parent region split definitions (e.g. 'asia:asia-west,25,0,55,60;asia-central,55,0,85,60;asia-east,85,0,145,60').")
 	flag.BoolVar(&args.skipRoadCells, "skip-road-cells", false, "Skip offline road-cell assignment.")
 	flag.BoolVar(&args.resume, "resume", false, "Skip regions with existing metadata. Resumes a partial build.")
 	flag.BoolVar(&args.pretty, "pretty", false, "Pretty-print JSON outputs.")
@@ -71,6 +73,7 @@ func main() {
 
 	// 1. Read regions
 	regionsByName := readRegions(args.regionsFile)
+	regionSplits := parseRegionSplits(args.regionSplits)
 
 	// 2. Load cities
 	if _, err := os.Stat(args.citiesDir); os.IsNotExist(err) {
@@ -104,7 +107,7 @@ func main() {
 			continue
 		}
 
-		city, err := buildCityRecord(path, feat, args.citiesDir, regionsByName, args.cellSizeMeters)
+		city, err := buildCityRecord(path, feat, args.citiesDir, regionsByName, regionSplits, args.cellSizeMeters)
 		if err != nil {
 			eprint("warn: skipping", path, ":", err)
 			skipped++

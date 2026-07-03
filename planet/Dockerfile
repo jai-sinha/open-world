@@ -44,6 +44,7 @@ COPY run_boundaries.sh /planetiler/run_boundaries.sh
 COPY run_city_dataset.sh /planetiler/run_city_dataset.sh
 COPY regions.txt /planetiler/regions.txt
 COPY go.mod /planetiler/go.mod
+COPY go.sum /planetiler/go.sum
 COPY cmd /planetiler/cmd
 
 RUN cd /planetiler \
