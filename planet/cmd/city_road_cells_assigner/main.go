@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -23,21 +22,10 @@ type cliArgs struct {
 	manifestName        string
 	discoveryIndexName  string
 	buildMetadataName   string
+	regionSplits        string
 	skipRoadCells       bool
-	parallelRegions     int
 	resume              bool
 	pretty              bool
-}
-
-type regionJob struct {
-	Name   string
-	Cities []*cityRecord
-}
-
-type regionResult struct {
-	Name string
-	Meta *regionResponse
-	Err  error
 }
 
 func parseArgs() cliArgs {
@@ -52,8 +40,8 @@ func parseArgs() cliArgs {
 	flag.StringVar(&args.manifestName, "manifest-name", "cities-manifest.json", "Output manifest filename.")
 	flag.StringVar(&args.discoveryIndexName, "discovery-index-name", "discovery-index.json", "Output discovery index filename.")
 	flag.StringVar(&args.buildMetadataName, "build-metadata-name", "build-metadata.json", "Output build metadata filename.")
+	flag.StringVar(&args.regionSplits, "region-splits", "", "Parent region split definitions (e.g. 'asia:asia-west,25,0,55,60;asia-central,55,0,85,60;asia-east,85,0,145,60').")
 	flag.BoolVar(&args.skipRoadCells, "skip-road-cells", false, "Skip offline road-cell assignment.")
-	flag.IntVar(&args.parallelRegions, "parallel-regions", 1, "Number of regions to process simultaneously (default 1).")
 	flag.BoolVar(&args.resume, "resume", false, "Skip regions with existing metadata. Resumes a partial build.")
 	flag.BoolVar(&args.pretty, "pretty", false, "Pretty-print JSON outputs.")
 	flag.Parse()
@@ -85,6 +73,7 @@ func main() {
 
 	// 1. Read regions
 	regionsByName := readRegions(args.regionsFile)
+	regionSplits := parseRegionSplits(args.regionSplits)
 
 	// 2. Load cities
 	if _, err := os.Stat(args.citiesDir); os.IsNotExist(err) {
@@ -97,53 +86,63 @@ func main() {
 	}
 
 	var cities []*cityRecord
-	cityIDsSeen := make(map[string]bool)
 	errors := 0
 	skipped := 0
 	duplicates := 0
 	outlinesWritten := 0
 
-	for _, path := range cityFiles {
-		feat, err := loadFeature(path)
-		if err != nil {
-			eprint("warn: failed to read", path, ":", err)
-			errors++
-			continue
+	if args.resume {
+		if cached, ok := loadCityCache(args.outputDir, args.cellSizeMeters, args.citiesDir, args.regionSplits); ok {
+			cities = cached
 		}
-
-		ok, reason := validateFeature(feat)
-		if !ok {
-			eprint("warn: skipping", path, ":", reason)
-			skipped++
-			continue
-		}
-
-		city, err := buildCityRecord(path, feat, args.citiesDir, regionsByName, args.cellSizeMeters)
-		if err != nil {
-			eprint("warn: skipping", path, ":", err)
-			skipped++
-			continue
-		}
-
-		if cityIDsSeen[city.cityID] {
-			eprint("warn: duplicate city id", city.cityID, "from", path, "; keeping first occurrence")
-			duplicates++
-			skipped++
-			continue
-		}
-
-		if err := writeOutline(args.outputDir, city.cityID, feat, args.outlineToleranceDeg, args.pretty); err != nil {
-			fatalf("error: %v", err)
-		}
-
-		cities = append(cities, city)
-		cityIDsSeen[city.cityID] = true
-		outlinesWritten++
 	}
 
-	sort.Slice(cities, func(i, j int) bool {
-		return cities[i].cityID < cities[j].cityID
-	})
+	if len(cities) == 0 {
+		cityIDsSeen := make(map[string]bool)
+		for _, path := range cityFiles {
+			feat, err := loadFeature(path)
+			if err != nil {
+				eprint("warn: failed to read", path, ":", err)
+				errors++
+				continue
+			}
+
+			ok, reason := validateFeature(feat)
+			if !ok {
+				eprint("warn: skipping", path, ":", reason)
+				skipped++
+				continue
+			}
+
+			city, err := buildCityRecord(path, feat, args.citiesDir, regionsByName, regionSplits, args.cellSizeMeters)
+			if err != nil {
+				eprint("warn: skipping", path, ":", err)
+				skipped++
+				continue
+			}
+
+			if cityIDsSeen[city.CityID] {
+				eprint("warn: duplicate city id", city.CityID, "from", path, "; keeping first occurrence")
+				duplicates++
+				skipped++
+				continue
+			}
+
+			if err := writeOutline(args.outputDir, city.CityID, feat, args.outlineToleranceDeg, args.pretty); err != nil {
+				fatalf("error: %v", err)
+			}
+
+			cities = append(cities, city)
+			cityIDsSeen[city.CityID] = true
+			outlinesWritten++
+		}
+
+		sort.Slice(cities, func(i, j int) bool {
+			return cities[i].CityID < cities[j].CityID
+		})
+
+		saveCityCache(args.outputDir, cities, args.cellSizeMeters, args.citiesDir, args.regionSplits, skipped, duplicates, errors)
+	}
 
 	// 3. Process regions
 	var regionResponses []*regionResponse
@@ -155,8 +154,8 @@ func main() {
 
 		citiesWithoutRegion := []string{}
 		for _, city := range cities {
-			if city.region == "" {
-				citiesWithoutRegion = append(citiesWithoutRegion, city.cityID)
+			if city.Region == "" {
+				citiesWithoutRegion = append(citiesWithoutRegion, 	city.CityID)
 			}
 		}
 		if len(citiesWithoutRegion) > 0 {
@@ -170,8 +169,8 @@ func main() {
 
 		citiesByRegion := make(map[string][]*cityRecord)
 		for _, city := range cities {
-			if city.region != "" {
-				citiesByRegion[city.region] = append(citiesByRegion[city.region], city)
+			if city.Region != "" {
+				citiesByRegion[city.Region] = append(citiesByRegion[city.Region], city)
 			}
 		}
 
@@ -197,9 +196,9 @@ func main() {
 					var existingMeta regionResponse
 					if err := json.Unmarshal(data, &existingMeta); err == nil {
 						for _, city := range regionCities {
-							if stats, ok := existingMeta.Cities[city.cityID]; ok {
+							if stats, ok := existingMeta.Cities[	city.CityID]; ok {
 								count := stats.AssignedRoadCells
-								city.totalRoadCells = &count
+								city.TotalRoadCells = &count
 							}
 						}
 						regionResponses = append(regionResponses, &existingMeta)
@@ -218,65 +217,26 @@ func main() {
 			pending = append(pending, pendingJob{Name: regionName, Cities: regionCities})
 		}
 
-		// Process regions concurrently
-		maxWorkers := args.parallelRegions
-		if maxWorkers < 1 {
-			maxWorkers = 1
-		}
-		if maxWorkers > len(pending) {
-			maxWorkers = len(pending)
-		}
-
-		jobs := make(chan regionJob, len(pending))
-		results := make(chan regionResult, len(pending))
-		var wg sync.WaitGroup
-
-		for i := 0; i < maxWorkers; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for job := range jobs {
-					eprint("processing region", job.Name, "("+fmt.Sprintf("%d", len(job.Cities))+" cities)")
-
-					sourcePbf := regionPbfPath(args.sourcesDir, job.Name)
-					regionStarted := time.Now()
-					meta, err := processRegion(
-						job.Name, sourcePbf, args.outputDir, args.citiesDir,
-						job.Cities, args.cellSizeMeters, defaultStripeWidthCells, regionStarted,
-					)
-					if err != nil {
-						results <- regionResult{Name: job.Name, Err: err}
-						continue
-					}
-					results <- regionResult{Name: job.Name, Meta: &meta}
-				}
-			}()
-		}
-
-		for _, pj := range pending {
-			jobs <- regionJob{Name: pj.Name, Cities: pj.Cities}
-		}
-		close(jobs)
-
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-
+		// Process regions sequentially
 		var firstErr error
-		for res := range results {
-			if res.Err != nil {
-				if firstErr == nil {
-					firstErr = fmt.Errorf("error processing region %s: %w", res.Name, res.Err)
-				}
-				continue
+		for _, pj := range pending {
+			eprint("processing region", pj.Name, "("+fmt.Sprintf("%d", len(pj.Cities))+" cities)")
+
+			sourcePbf := regionPbfPath(args.sourcesDir, pj.Name)
+			regionStarted := time.Now()
+			meta, err := processRegion(
+				pj.Name, sourcePbf, args.outputDir, args.citiesDir,
+				pj.Cities, args.cellSizeMeters, defaultStripeWidthCells, regionStarted,
+			)
+			if err != nil {
+				firstErr = fmt.Errorf("error processing region %s: %w", pj.Name, err)
+				break
 			}
 
-			sourcePbf := regionPbfPath(args.sourcesDir, res.Name)
-			regionMetaMap := regionResponseToMap(res.Meta)
+			regionMetaMap := regionResponseToMap(&meta)
 			regionMetaMap["sourcePbf"] = sourcePbf
-			writeRegionMetadata(args.outputDir, res.Name, regionMetaMap, args.pretty)
-			regionResponses = append(regionResponses, res.Meta)
+			writeRegionMetadata(args.outputDir, pj.Name, regionMetaMap, args.pretty)
+			regionResponses = append(regionResponses, &meta)
 		}
 
 		if firstErr != nil {
@@ -289,9 +249,9 @@ func main() {
 
 		missingRoadCellOutputs := []string{}
 		for _, city := range cities {
-			outPath := filepath.Join(args.outputDir, city.roadCellsPath)
-			if city.totalRoadCells == nil || !fileExists(outPath) {
-				missingRoadCellOutputs = append(missingRoadCellOutputs, city.cityID)
+			outPath := filepath.Join(args.outputDir, city.RoadCellsPath)
+			if city.TotalRoadCells == nil || !fileExists(outPath) {
+				missingRoadCellOutputs = append(missingRoadCellOutputs, 	city.CityID)
 			}
 		}
 		if len(missingRoadCellOutputs) > 0 {
@@ -327,7 +287,7 @@ func main() {
 	// 5. Summary
 	fmt.Printf(
 		"Built city dataset: %d cities, %d discovery buckets, %d outlines\n",
-		len(cities), int(discoveryIndex["bucketCount"].(float64)), outlinesWritten,
+		len(cities), discoveryIndex["bucketCount"].(int), outlinesWritten,
 	)
 	fmt.Printf("  manifest:        %s\n", manifestPath)
 	fmt.Printf("  discovery index: %s\n", discoveryIndexPath)

@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -44,10 +43,10 @@ func processRegion(
 	}
 
 	for _, city := range cities {
-		stats, ok := response.Cities[city.cityID]
+		stats, ok := response.Cities[city.CityID]
 		if ok {
 			count := stats.AssignedRoadCells
-			city.totalRoadCells = &count
+			city.TotalRoadCells = &count
 		}
 	}
 
@@ -64,16 +63,16 @@ func loadCityBoundaries(
 	citiesByStripe := make(map[int][]int)
 
 	for _, city := range cities {
-		absPath := filepath.Join(citiesDir, city.sourcePath)
+		absPath := filepath.Join(citiesDir, city.SourcePath)
 		polygons, err := loadCityPolygons(absPath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("load city boundary for %s: %w", city.cityID, err)
+			return nil, nil, fmt.Errorf("load city boundary for %s: %w", city.CityID, err)
 		}
 
-		bounds := bboxToCellBounds(city.bbox, cellSize)
+		bounds := bboxToCellBounds(city.BBox, cellSize)
 		boundary := cityBoundary{
-			CityID:         city.cityID,
-			RoadCellsPath:  city.roadCellsPath,
+			CityID:         city.CityID,
+			RoadCellsPath:  city.RoadCellsPath,
 			RoadCellBounds: bounds,
 			Polygons:       polygons,
 		}
@@ -559,80 +558,26 @@ func buildPartitionBatch(line []byte, cellSize int, stripeWidth int) partitionBa
 }
 
 func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser, func() error, error) {
-	// If the PBF is already pre-filtered to highways only, skip tags-filter
-	// and go directly to add-locations-to-ways.
-	if strings.HasSuffix(sourcePbf, "-highways.osm.pbf") {
-		addArgs := []string{
-			"add-locations-to-ways",
-			"--no-progress",
-			"-F", "pbf",
-			"-i", "sparse_file_array",
-			"-f", "opl,locations_on_ways=true,add_metadata=false",
-			"-o", "-", sourcePbf,
-		}
-		addCmd := exec.Command("osmium", addArgs...)
-		addCmd.Stderr = os.Stderr
-		addStdout, err := addCmd.StdoutPipe()
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := addCmd.Start(); err != nil {
-			return nil, nil, err
-		}
-		return addStdout, addCmd.Wait, nil
-	}
-
-	tagsArgs := []string{"tags-filter", "--no-progress", "-f", "pbf", "-o", "-", "-t", sourcePbf}
-	for _, highway := range highwayValues {
-		tagsArgs = append(tagsArgs, "w/highway="+highway)
-	}
-	tagsCmd := exec.Command("osmium", tagsArgs...)
-	tagsCmd.Stderr = os.Stderr
-
+	// the PBF is already pre-filtered to highways only
 	addArgs := []string{
 		"add-locations-to-ways",
 		"--no-progress",
 		"-F", "pbf",
-		"-i", "sparse_file_array",
+		"-i", "flex_mem",
 		"-f", "opl,locations_on_ways=true,add_metadata=false",
-		"-o", "-", "-",
+		"-o", "-", sourcePbf,
 	}
 	addCmd := exec.Command("osmium", addArgs...)
 	addCmd.Stderr = os.Stderr
-
-	tagsStdout, err := tagsCmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	addCmd.Stdin = tagsStdout
 	addStdout, err := addCmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, err
 	}
-
 	if err := addCmd.Start(); err != nil {
 		return nil, nil, err
 	}
-	if err := tagsCmd.Start(); err != nil {
-		_ = addCmd.Process.Kill()
-		_, _ = io.Copy(io.Discard, addStdout)
-		_ = addCmd.Wait()
-		return nil, nil, err
-	}
+	return addStdout, addCmd.Wait, nil
 
-	waitFn := func() error {
-		addErr := addCmd.Wait()
-		tagsErr := tagsCmd.Wait()
-		if addErr != nil {
-			return fmt.Errorf("osmium add-locations-to-ways failed: %w", addErr)
-		}
-		if tagsErr != nil {
-			return fmt.Errorf("osmium tags-filter failed: %w", tagsErr)
-		}
-		return nil
-	}
-
-	return addStdout, waitFn, nil
 }
 
 func parseOPLWaySegments(line []byte) ([]segment, error) {
