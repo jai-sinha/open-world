@@ -274,7 +274,7 @@ func buildCityRecord(
 				region = base
 			} else if split, ok := regionSplits[base]; ok {
 				// Parent region was split into sub-regions.
-				// Find the correct sub-region from the city's bbox.
+				// Determine the sub-region from the city's bbox.
 				subRegion := resolveSubRegionForBbox(split, *computedBbox)
 				if _, ok := regions[subRegion]; ok {
 					region = subRegion
@@ -300,21 +300,21 @@ func buildCityRecord(
 	relSourcePath, _ := filepath.Rel(citiesDir, path)
 
 	return &cityRecord{
-		cityID:         cityID,
-		osmID:          osmID,
-		name:           name,
-		displayName:    displayName,
-		region:         region,
-		adminLevel:     adminLevel,
-		boundaryType:   boundaryType,
-		geometryType:   feat.Geometry.Type,
-		bbox:           *computedBbox,
-		center:         computedCenter,
-		outlinePath:    buildOutlinePath(cityID),
-		sourcePath:     relSourcePath,
-		shard:          shard,
-		roadCellsPath:  buildRoadCellsPath(cityID, shard),
-		roadCellBounds: &roadCellBounds,
+		CityID:         cityID,
+		OsmID:          osmID,
+		Name:           name,
+		DisplayName:    displayName,
+		Region:         region,
+		AdminLevel:     adminLevel,
+		BoundaryType:   boundaryType,
+		GeometryType:   feat.Geometry.Type,
+		BBox:           *computedBbox,
+		Center:         computedCenter,
+		OutlinePath:    buildOutlinePath(cityID),
+		SourcePath:     relSourcePath,
+		Shard:          shard,
+		RoadCellsPath:  buildRoadCellsPath(cityID, shard),
+		RoadCellBounds: &roadCellBounds,
 	}, nil
 }
 
@@ -530,29 +530,29 @@ func computeDiscoveryBuckets(box bbox, bucketSize float64) []string {
 
 func cityRecordToManifestEntry(city *cityRecord) map[string]interface{} {
 	entry := map[string]interface{}{
-		"id":               city.cityID,
-		"osmId":            city.osmID,
-		"name":             city.name,
-		"displayName":      city.displayName,
-		"region":           city.region,
-		"adminLevel":       city.adminLevel,
-		"boundaryType":     city.boundaryType,
-		"geometryType":     city.geometryType,
-		"bbox":             city.bbox,
-		"center":           city.center,
-		"outlinePath":      city.outlinePath,
-		"sourcePath":       city.sourcePath,
-		"shard":            city.shard,
-		"roadCellsPath":    city.roadCellsPath,
+		"id":               city.CityID,
+		"osmId":            city.OsmID,
+		"name":             city.Name,
+		"displayName":      city.DisplayName,
+		"region":           city.Region,
+		"adminLevel":       city.AdminLevel,
+		"boundaryType":     city.BoundaryType,
+		"geometryType":     city.GeometryType,
+		"bbox":             city.BBox,
+		"center":           city.Center,
+		"outlinePath":      city.OutlinePath,
+		"sourcePath":       city.SourcePath,
+		"shard":            city.Shard,
+		"roadCellsPath":    city.RoadCellsPath,
 		"roadCellEncoding": "xy-int32-pairs-v1",
 	}
-	if city.totalRoadCells != nil {
-		entry["totalRoadCells"] = *city.totalRoadCells
+	if city.TotalRoadCells != nil {
+		entry["totalRoadCells"] = *city.TotalRoadCells
 	} else {
 		entry["totalRoadCells"] = nil
 	}
-	if city.roadCellBounds != nil {
-		entry["roadCellBounds"] = city.roadCellBounds
+	if city.RoadCellBounds != nil {
+		entry["roadCellBounds"] = city.RoadCellBounds
 	} else {
 		entry["roadCellBounds"] = nil
 	}
@@ -568,12 +568,12 @@ func buildManifest(
 ) map[string]interface{} {
 	byID := make(map[string]interface{}, len(cities))
 	for _, city := range cities {
-		byID[city.cityID] = cityRecordToManifestEntry(city)
+		byID[city.CityID] = cityRecordToManifestEntry(city)
 	}
 
 	regionsSummary := make(map[string]map[string]int)
 	for _, city := range cities {
-		regionName := city.region
+		regionName := city.Region
 		if regionName == "" {
 			regionName = "unknown"
 		}
@@ -605,11 +605,11 @@ func buildManifest(
 	cityRegions := make(map[string]bool)
 	withRoadCells := 0
 	for _, city := range cities {
-		shards[city.shard] = true
-		if city.region != "" {
-			cityRegions[city.region] = true
+		shards[city.Shard] = true
+		if city.Region != "" {
+			cityRegions[city.Region] = true
 		}
-		if city.totalRoadCells != nil {
+		if city.TotalRoadCells != nil {
 			withRoadCells++
 		}
 	}
@@ -647,8 +647,8 @@ func buildManifest(
 func buildDiscoveryIndex(cities []*cityRecord, bucketSize float64) map[string]interface{} {
 	buckets := make(map[string][]string)
 	for _, city := range cities {
-		for _, bucket := range computeDiscoveryBuckets(city.bbox, bucketSize) {
-			buckets[bucket] = append(buckets[bucket], city.cityID)
+		for _, bucket := range computeDiscoveryBuckets(city.BBox, bucketSize) {
+			buckets[bucket] = append(buckets[bucket], city.CityID)
 		}
 	}
 
@@ -687,9 +687,9 @@ func buildBuildMetadata(
 	citiesWithRoadCells := 0
 	totalAssignedRoadCells := 0
 	for _, city := range cities {
-		if city.totalRoadCells != nil {
+		if city.TotalRoadCells != nil {
 			citiesWithRoadCells++
-			totalAssignedRoadCells += *city.totalRoadCells
+			totalAssignedRoadCells += *city.TotalRoadCells
 		}
 	}
 
@@ -786,6 +786,73 @@ func regionPbfPath(sourcesDir, regionName string) string {
 		return plainPath
 	}
 	return filepath.Join(sourcesDir, regionName+"-latest.osm.pbf")
+}
+
+type cityCache struct {
+	Version        int           `json:"version"`
+	CellSizeMeters int           `json:"cellSizeMeters"`
+	CitiesDir      string        `json:"citiesDir"`
+	RegionSplits   string        `json:"regionSplits"`
+	CreatedAt      string        `json:"createdAt"`
+	Cities         []*cityRecord `json:"cities"`
+	Skipped        int           `json:"skipped"`
+	Duplicates     int           `json:"duplicates"`
+	Errors         int           `json:"errors"`
+}
+
+func cachePath(outputDir string) string {
+	return filepath.Join(outputDir, ".city-records-cache.json")
+}
+
+func saveCityCache(outputDir string, cities []*cityRecord, cellSize int, citiesDir, regionSplits string, skipped, duplicates, errors int) {
+	payload := cityCache{
+		Version:        1,
+		CellSizeMeters: cellSize,
+		CitiesDir:      citiesDir,
+		RegionSplits:   regionSplits,
+		CreatedAt:      nowUTCISO(),
+		Cities:         cities,
+		Skipped:        skipped,
+		Duplicates:     duplicates,
+		Errors:         errors,
+	}
+	path := cachePath(outputDir)
+	tmpPath := path + ".tmp"
+	if err := writeJSON(tmpPath, payload, false); err != nil {
+		eprint("warn: failed to write city cache:", err)
+		return
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		eprint("warn: failed to finalize city cache:", err)
+	}
+	eprint("saved city records cache (" + fmt.Sprintf("%d", len(cities)) + " cities)")
+}
+
+func loadCityCache(outputDir string, cellSize int, citiesDir, regionSplits string) ([]*cityRecord, bool) {
+	path := cachePath(outputDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var cache cityCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil, false
+	}
+	if cache.Version != 1 {
+		return nil, false
+	}
+	if cache.CellSizeMeters != cellSize {
+		return nil, false
+	}
+	if cache.CitiesDir != citiesDir {
+		return nil, false
+	}
+	if cache.RegionSplits != regionSplits {
+		eprint("region splits changed, rebuilding cache")
+		return nil, false
+	}
+	eprint("loaded city records cache (" + fmt.Sprintf("%d", len(cache.Cities)) + " cities)")
+	return cache.Cities, true
 }
 
 func nowUTCISO() string {

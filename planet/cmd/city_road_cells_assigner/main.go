@@ -86,53 +86,63 @@ func main() {
 	}
 
 	var cities []*cityRecord
-	cityIDsSeen := make(map[string]bool)
 	errors := 0
 	skipped := 0
 	duplicates := 0
 	outlinesWritten := 0
 
-	for _, path := range cityFiles {
-		feat, err := loadFeature(path)
-		if err != nil {
-			eprint("warn: failed to read", path, ":", err)
-			errors++
-			continue
+	if args.resume {
+		if cached, ok := loadCityCache(args.outputDir, args.cellSizeMeters, args.citiesDir, args.regionSplits); ok {
+			cities = cached
 		}
-
-		ok, reason := validateFeature(feat)
-		if !ok {
-			eprint("warn: skipping", path, ":", reason)
-			skipped++
-			continue
-		}
-
-		city, err := buildCityRecord(path, feat, args.citiesDir, regionsByName, regionSplits, args.cellSizeMeters)
-		if err != nil {
-			eprint("warn: skipping", path, ":", err)
-			skipped++
-			continue
-		}
-
-		if cityIDsSeen[city.cityID] {
-			eprint("warn: duplicate city id", city.cityID, "from", path, "; keeping first occurrence")
-			duplicates++
-			skipped++
-			continue
-		}
-
-		if err := writeOutline(args.outputDir, city.cityID, feat, args.outlineToleranceDeg, args.pretty); err != nil {
-			fatalf("error: %v", err)
-		}
-
-		cities = append(cities, city)
-		cityIDsSeen[city.cityID] = true
-		outlinesWritten++
 	}
 
-	sort.Slice(cities, func(i, j int) bool {
-		return cities[i].cityID < cities[j].cityID
-	})
+	if len(cities) == 0 {
+		cityIDsSeen := make(map[string]bool)
+		for _, path := range cityFiles {
+			feat, err := loadFeature(path)
+			if err != nil {
+				eprint("warn: failed to read", path, ":", err)
+				errors++
+				continue
+			}
+
+			ok, reason := validateFeature(feat)
+			if !ok {
+				eprint("warn: skipping", path, ":", reason)
+				skipped++
+				continue
+			}
+
+			city, err := buildCityRecord(path, feat, args.citiesDir, regionsByName, regionSplits, args.cellSizeMeters)
+			if err != nil {
+				eprint("warn: skipping", path, ":", err)
+				skipped++
+				continue
+			}
+
+			if cityIDsSeen[city.CityID] {
+				eprint("warn: duplicate city id", city.CityID, "from", path, "; keeping first occurrence")
+				duplicates++
+				skipped++
+				continue
+			}
+
+			if err := writeOutline(args.outputDir, city.CityID, feat, args.outlineToleranceDeg, args.pretty); err != nil {
+				fatalf("error: %v", err)
+			}
+
+			cities = append(cities, city)
+			cityIDsSeen[city.CityID] = true
+			outlinesWritten++
+		}
+
+		sort.Slice(cities, func(i, j int) bool {
+			return cities[i].CityID < cities[j].CityID
+		})
+
+		saveCityCache(args.outputDir, cities, args.cellSizeMeters, args.citiesDir, args.regionSplits, skipped, duplicates, errors)
+	}
 
 	// 3. Process regions
 	var regionResponses []*regionResponse
@@ -144,8 +154,8 @@ func main() {
 
 		citiesWithoutRegion := []string{}
 		for _, city := range cities {
-			if city.region == "" {
-				citiesWithoutRegion = append(citiesWithoutRegion, city.cityID)
+			if city.Region == "" {
+				citiesWithoutRegion = append(citiesWithoutRegion, city.CityID)
 			}
 		}
 		if len(citiesWithoutRegion) > 0 {
@@ -159,8 +169,8 @@ func main() {
 
 		citiesByRegion := make(map[string][]*cityRecord)
 		for _, city := range cities {
-			if city.region != "" {
-				citiesByRegion[city.region] = append(citiesByRegion[city.region], city)
+			if city.Region != "" {
+				citiesByRegion[city.Region] = append(citiesByRegion[city.Region], city)
 			}
 		}
 
@@ -186,9 +196,9 @@ func main() {
 					var existingMeta regionResponse
 					if err := json.Unmarshal(data, &existingMeta); err == nil {
 						for _, city := range regionCities {
-							if stats, ok := existingMeta.Cities[city.cityID]; ok {
+							if stats, ok := existingMeta.Cities[city.CityID]; ok {
 								count := stats.AssignedRoadCells
-								city.totalRoadCells = &count
+								city.TotalRoadCells = &count
 							}
 						}
 						regionResponses = append(regionResponses, &existingMeta)
@@ -239,9 +249,9 @@ func main() {
 
 		missingRoadCellOutputs := []string{}
 		for _, city := range cities {
-			outPath := filepath.Join(args.outputDir, city.roadCellsPath)
-			if city.totalRoadCells == nil || !fileExists(outPath) {
-				missingRoadCellOutputs = append(missingRoadCellOutputs, city.cityID)
+			outPath := filepath.Join(args.outputDir, city.RoadCellsPath)
+			if city.TotalRoadCells == nil || !fileExists(outPath) {
+				missingRoadCellOutputs = append(missingRoadCellOutputs, city.CityID)
 			}
 		}
 		if len(missingRoadCellOutputs) > 0 {
@@ -277,7 +287,7 @@ func main() {
 	// 5. Summary
 	fmt.Printf(
 		"Built city dataset: %d cities, %d discovery buckets, %d outlines\n",
-		len(cities), int(discoveryIndex["bucketCount"].(float64)), outlinesWritten,
+		len(cities), discoveryIndex["bucketCount"].(int), outlinesWritten,
 	)
 	fmt.Printf("  manifest:        %s\n", manifestPath)
 	fmt.Printf("  discovery index: %s\n", discoveryIndexPath)

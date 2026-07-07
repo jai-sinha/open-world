@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -47,10 +49,10 @@ func processRegion(
 	}
 
 	for _, city := range cities {
-		stats, ok := response.Cities[city.cityID]
+		stats, ok := response.Cities[city.CityID]
 		if ok {
 			count := stats.AssignedRoadCells
-			city.totalRoadCells = &count
+			city.TotalRoadCells = &count
 		}
 	}
 
@@ -67,16 +69,16 @@ func loadCityBoundaries(
 	citiesByStripe := make(map[int][]int)
 
 	for _, city := range cities {
-		absPath := filepath.Join(citiesDir, city.sourcePath)
+		absPath := filepath.Join(citiesDir, city.SourcePath)
 		polygons, err := loadCityPolygons(absPath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("load city boundary for %s: %w", city.cityID, err)
+			return nil, nil, fmt.Errorf("load city boundary for %s: %w", city.CityID, err)
 		}
 
-		bounds := bboxToCellBounds(city.bbox, cellSize)
+		bounds := bboxToCellBounds(city.BBox, cellSize)
 		boundary := cityBoundary{
-			CityID:         city.cityID,
-			RoadCellsPath:  city.roadCellsPath,
+			CityID:         city.CityID,
+			RoadCellsPath:  city.RoadCellsPath,
 			RoadCellBounds: bounds,
 			Polygons:       polygons,
 		}
@@ -587,6 +589,101 @@ func processWay(
 	}
 
 	return partitionBatch{StripeSegments: stripeSegments, FeatureCount: 1}
+}
+
+func openRoadWayStream(sourcePbf string, highwayValues []string) (io.ReadCloser, func() error, error) {
+	// the PBF is already pre-filtered to highways only
+	addArgs := []string{
+		"add-locations-to-ways",
+		"--no-progress",
+		"-F", "pbf",
+		"-i", "flex_mem",
+		"-f", "opl,locations_on_ways=true,add_metadata=false",
+		"-o", "-", sourcePbf,
+	}
+	addCmd := exec.Command("osmium", addArgs...)
+	addCmd.Stderr = os.Stderr
+	addStdout, err := addCmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := addCmd.Start(); err != nil {
+		return nil, nil, err
+	}
+	return addStdout, addCmd.Wait, nil
+
+}
+
+func parseOPLWaySegments(line []byte) ([]segment, error) {
+	fields := bytes.Fields(line)
+	if len(fields) == 0 || len(fields[0]) == 0 || fields[0][0] != 'w' {
+		return nil, nil
+	}
+
+	var nodeField []byte
+	for _, field := range fields[1:] {
+		if len(field) > 0 && field[0] == 'N' {
+			nodeField = field[1:]
+			break
+		}
+	}
+	if len(nodeField) == 0 {
+		return nil, nil
+	}
+
+	entries := bytes.Split(nodeField, []byte{','})
+	points := make([]meterPoint, 0, len(entries))
+	for _, entry := range entries {
+		point, ok, err := parseOPLNodeLocation(entry)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			points = append(points, point)
+		}
+	}
+	if len(points) < 2 {
+		return nil, nil
+	}
+
+	segments := make([]segment, 0, len(points)-1)
+	prev := points[0]
+	for _, cur := range points[1:] {
+		segments = append(segments, segment{X1: prev.X, Y1: prev.Y, X2: cur.X, Y2: cur.Y})
+		prev = cur
+	}
+	return segments, nil
+}
+
+func parseOPLNodeLocation(entry []byte) (meterPoint, bool, error) {
+	entry = bytes.TrimSpace(entry)
+	if len(entry) == 0 {
+		return meterPoint{}, false, nil
+	}
+	xPos := bytes.IndexByte(entry, 'x')
+	if xPos < 0 {
+		return meterPoint{}, false, nil
+	}
+	yPosRel := bytes.IndexByte(entry[xPos+1:], 'y')
+	if yPosRel < 0 {
+		return meterPoint{}, false, nil
+	}
+	yPos := xPos + 1 + yPosRel
+	if yPos <= xPos+1 || yPos+1 >= len(entry) {
+		return meterPoint{}, false, fmt.Errorf("invalid OPL node location: %q", entry)
+	}
+
+	lng, err := strconv.ParseFloat(string(entry[xPos+1:yPos]), 64)
+	if err != nil {
+		return meterPoint{}, false, fmt.Errorf("parse OPL longitude %q: %w", entry, err)
+	}
+	lat, err := strconv.ParseFloat(string(entry[yPos+1:]), 64)
+	if err != nil {
+		return meterPoint{}, false, fmt.Errorf("parse OPL latitude %q: %w", entry, err)
+	}
+
+	x, y := latLngToMeters(lat, lng)
+	return meterPoint{X: x, Y: y}, true, nil
 }
 
 func newStripeWriterCache(dir string, maxOpen int) *stripeWriterCache {

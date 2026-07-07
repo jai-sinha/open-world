@@ -37,13 +37,13 @@ echo "Started: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 # -----------------------------------------------------------------------------
 # Config
 # -----------------------------------------------------------------------------
-SOURCE_DIR=${SOURCE_DIR:-"/sources"}
+SOURCE_DIR=${SOURCE_DIR:-"./sources"}
 WORK_DIR=${WORK_DIR:-"/tmp/work-city-dataset"}
-OUTPUT_DIR=${OUTPUT_DIR:-"/output"}
+OUTPUT_DIR=${OUTPUT_DIR:-"./output"}
 CITIES_DIR=${CITIES_DIR:-"$OUTPUT_DIR/cities"}
 DATASET_DIR=${DATASET_DIR:-"$OUTPUT_DIR/city-dataset"}
-REGIONS_FILE=${REGIONS_FILE:-""}
-ASSIGNER_BIN=${ASSIGNER_BIN:-"/planetiler/city_road_cells_assigner"}
+REGIONS_FILE=${REGIONS_FILE:-"./regions.txt"}
+ASSIGNER_BIN=${ASSIGNER_BIN:-"./bin/city_road_cells_assigner"}
 
 
 BUCKET_SIZE_DEG=${BUCKET_SIZE_DEG:-"0.25"}
@@ -51,6 +51,7 @@ OUTLINE_TOLERANCE_DEG=${OUTLINE_TOLERANCE_DEG:-"0.0015"}
 CELL_SIZE_METERS=${CELL_SIZE_METERS:-"50"}
 PRETTY_JSON=${PRETTY_JSON:-"0"}
 SKIP_ROAD_CELLS=${SKIP_ROAD_CELLS:-"0"}
+RESUME=${RESUME:-"1"}
 
 R2_BUCKET=${R2_BUCKET:-""}
 R2_ENDPOINT=${R2_ENDPOINT:-""}
@@ -73,21 +74,25 @@ mkdir -p "$REGION_METADATA_DIR"
 # -----------------------------------------------------------------------------
 # Region split configuration
 # -----------------------------------------------------------------------------
-# When a region name in regions.txt has been split into sub-region PBF files,
-# define the sub-regions and their bounding boxes here. The script will:
-#   1. Replace the parent region with sub-regions in the working regions file
-#   2. Pass --region-splits to the Go binary, which remaps cities at runtime
-#      (no GeoJSON file patching needed)
+# When a region in regions.txt has been split into sub-regions (e.g. asia
+# split into west/central/east), define the split here. The script will
+# replace the parent region with sub-regions in the working regions file,
+# and pass the split definition to the Go binary for runtime remapping.
 #
 # Format: PARENT:SUB_NAME,MIN_LON,MIN_LAT,MAX_LON,MAX_LAT;SUB_NAME,...
-# Default: Asia split into west/central/east (matching the osmium extract bboxes)
-REGION_SPLITS=${REGION_SPLITS:-"asia:asia-west,25,0,55,60;asia-central,55,0,85,60;asia-east,85,0,145,60"}
+REGION_SPLITS=${REGION_SPLITS:-"asia:asia-west,25,0,55,60;asia-central,55,0,85,60;asia-east,85,0,145,60|europe:europe-sw-s,-10,35,6.67,43.75;europe-sw-n,-10,43.75,6.67,52.5;europe-sc-s,6.67,35,23.33,43.75;europe-sc-nw,6.67,43.75,15,52.5;europe-sc-ne,15,43.75,23.33,52.5;europe-se,23.33,35,40,52.5;europe-nw,-10,52.5,6.67,70;europe-nc,6.67,52.5,23.33,70;europe-ne,23.33,52.5,40,70|north-america:north-america-west,-170,10,-130,85;north-america-central-sw,-130,10,-110,47.5;north-america-central-se,-110,10,-90,47.5;north-america-central-n,-130,47.5,-90,85;north-america-east-sw,-90,10,-82,47.5;north-america-east-sc,-82,10,-70,47.5;north-america-east-se,-70,10,-50,47.5;north-america-east-n,-90,47.5,-50,85"}
 
-# Parse parent from before the first colon, then sub-region names from after.
-# Output: one line per sub-region: SUB_NAME (for the region expansion below)
-SPLIT_SUB_NAMES=$(echo "$REGION_SPLITS" | cut -d: -f2- | tr ';' '\n' | while IFS=, read -r name rest; do
-  [ -n "$name" ] && echo "$name"
-done)
+# Helper: extract sub-region names from a parent:subs split definition
+split_sub_names() {
+  echo "$1" | cut -d: -f2- | tr ';' '\n' | while IFS=, read -r name rest; do
+    [ -n "$name" ] && echo "$name"
+  done
+}
+
+# Helper: extract parent name from a parent:subs split definition
+split_parent() {
+  echo "$1" | cut -d: -f1
+}
 
 # -----------------------------------------------------------------------------
 # Tool checks
@@ -205,6 +210,48 @@ REGIONS_LIST_FILE="$WORK_REGIONS_FILE"
 REGION_COUNT=$REGION_COUNT_EXPANDED
 
 # -----------------------------------------------------------------------------
+# Handle region splits (e.g. asia → asia-west, asia-central, asia-east)
+# -----------------------------------------------------------------------------
+# Replace the parent region with sub-regions in a working copy of the
+# regions file. The Go binary handles city-to-sub-region remapping at
+# runtime using --region-splits (no GeoJSON patching needed).
+ORIG_REGIONS_FILE="$REGIONS_LIST_FILE"
+WORK_REGIONS_FILE="$WORK_DIR/regions_expanded.txt"
+: > "$WORK_REGIONS_FILE"
+
+if [ -n "$REGION_SPLITS" ]; then
+  while IFS= read -r region; do
+    trimmed=$(echo "$region" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$trimmed" ] && continue
+    case "$trimmed" in \#*) continue ;; esac
+
+    # Check each split definition for a matching parent
+    FOUND=0
+    while IFS= read -r SPLIT_DEF; do
+      PARENT=$(split_parent "$SPLIT_DEF")
+      if [ "$trimmed" = "$PARENT" ]; then
+        split_sub_names "$SPLIT_DEF"
+        FOUND=1
+        break
+      fi
+    done < <(echo "$REGION_SPLITS" | tr '|' '\n')
+
+    if [ "$FOUND" -eq 0 ]; then
+      echo "$trimmed"
+    fi
+  done < "$ORIG_REGIONS_FILE" | sort -u > "$WORK_REGIONS_FILE"
+
+  REGION_COUNT_EXPANDED=$(wc -l < "$WORK_REGIONS_FILE" | tr -d ' ')
+  if [ "$REGION_COUNT" != "$REGION_COUNT_EXPANDED" ]; then
+    echo "📦 Regions expanded:      $REGION_COUNT → ${REGION_COUNT_EXPANDED} sub-regions"
+    REGION_COUNT=$REGION_COUNT_EXPANDED
+  fi
+
+  # Use the expanded regions file for the Go binary
+  REGIONS_LIST_FILE="$WORK_REGIONS_FILE"
+fi
+
+# -----------------------------------------------------------------------------
 # Build dataset
 # -----------------------------------------------------------------------------
 BUILD_START=$(date +%s)
@@ -236,6 +283,10 @@ fi
 
 if [ "${RESUME:-0}" = "1" ]; then
   GO_ARGS+=(--resume)
+fi
+
+if [ -n "$REGION_SPLITS" ]; then
+  GO_ARGS+=(--region-splits "$REGION_SPLITS")
 fi
 
 echo ""

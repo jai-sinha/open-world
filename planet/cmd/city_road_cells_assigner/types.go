@@ -16,7 +16,7 @@ const (
 	featureLogEvery         = 50000
 	stripeLogEvery          = 250000
 	readChunkSegments       = 2048
-	maxOpenStripeWriters    = 64
+	maxOpenStripeWriters    = 256
 	stripeWriterBufferBytes = 64 << 10
 	epsilon                 = 1e-9
 	earthRadius             = 6378137.0
@@ -124,22 +124,22 @@ type stripeWriterCache struct {
 }
 
 type cityRecord struct {
-	cityID         string
-	osmID          string
-	name           string
-	displayName    string
-	region         string
-	adminLevel     string
-	boundaryType   string
-	geometryType   string
-	bbox           bbox
-	center         center
-	outlinePath    string
-	sourcePath     string
-	shard          string
-	roadCellsPath  string
-	totalRoadCells *int
-	roadCellBounds *cellBounds
+	CityID         string      `json:"cityId"`
+	OsmID          string      `json:"osmId"`
+	Name           string      `json:"name"`
+	DisplayName    string      `json:"displayName"`
+	Region         string      `json:"region"`
+	AdminLevel     string      `json:"adminLevel"`
+	BoundaryType   string      `json:"boundaryType"`
+	GeometryType   string      `json:"geometryType"`
+	BBox           bbox        `json:"bbox"`
+	Center         center      `json:"center"`
+	OutlinePath    string      `json:"outlinePath"`
+	SourcePath     string      `json:"sourcePath"`
+	Shard          string      `json:"shard"`
+	RoadCellsPath  string      `json:"roadCellsPath"`
+	TotalRoadCells *int        `json:"totalRoadCells"`
+	RoadCellBounds *cellBounds `json:"roadCellBounds"`
 }
 
 type cityStats struct {
@@ -162,45 +162,48 @@ type regionSplit struct {
 }
 
 func parseRegionSplits(s string) map[string]*regionSplit {
-	parts := strings.SplitN(s, ":", 2)
-	if len(parts) != 2 {
-		return nil
-	}
-	parent := parts[0]
-	rest := parts[1]
-	if parent == "" || rest == "" {
-		return nil
-	}
-
-	rs := &regionSplit{Parent: parent}
-	for _, subPart := range strings.Split(rest, ";") {
-		subPart = strings.TrimSpace(subPart)
-		if subPart == "" {
-			continue
-		}
-		fields := strings.Split(subPart, ",")
-		if len(fields) != 5 {
-			continue
-		}
-		minLon, _ := strconv.ParseFloat(strings.TrimSpace(fields[1]), 64)
-		minLat, _ := strconv.ParseFloat(strings.TrimSpace(fields[2]), 64)
-		maxLon, _ := strconv.ParseFloat(strings.TrimSpace(fields[3]), 64)
-		maxLat, _ := strconv.ParseFloat(strings.TrimSpace(fields[4]), 64)
-		rs.SubRegions = append(rs.SubRegions, subRegionDef{
-			Name:   strings.TrimSpace(fields[0]),
-			MinLon: minLon,
-			MinLat: minLat,
-			MaxLon: maxLon,
-			MaxLat: maxLat,
-		})
-	}
-
-	if len(rs.SubRegions) == 0 {
-		return nil
-	}
-
 	splits := make(map[string]*regionSplit)
-	splits[parent] = rs
+	if s == "" {
+		return splits
+	}
+	for _, def := range strings.Split(s, "|") {
+		parts := strings.SplitN(def, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		parent := parts[0]
+		rest := parts[1]
+		if parent == "" || rest == "" {
+			continue
+		}
+
+		rs := &regionSplit{Parent: parent}
+		for _, subPart := range strings.Split(rest, ";") {
+			subPart = strings.TrimSpace(subPart)
+			if subPart == "" {
+				continue
+			}
+			fields := strings.Split(subPart, ",")
+			if len(fields) != 5 {
+				continue
+			}
+			minLon, _ := strconv.ParseFloat(strings.TrimSpace(fields[1]), 64)
+			minLat, _ := strconv.ParseFloat(strings.TrimSpace(fields[2]), 64)
+			maxLon, _ := strconv.ParseFloat(strings.TrimSpace(fields[3]), 64)
+			maxLat, _ := strconv.ParseFloat(strings.TrimSpace(fields[4]), 64)
+			rs.SubRegions = append(rs.SubRegions, subRegionDef{
+				Name:   strings.TrimSpace(fields[0]),
+				MinLon: minLon,
+				MinLat: minLat,
+				MaxLon: maxLon,
+				MaxLat: maxLat,
+			})
+		}
+
+		if len(rs.SubRegions) > 0 {
+			splits[parent] = rs
+		}
+	}
 	return splits
 }
 
