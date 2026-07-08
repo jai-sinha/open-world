@@ -7,11 +7,11 @@ export interface City {
 	osmId?: string;
 	name: string;
 	displayName: string;
-	boundary: Feature<Polygon | MultiPolygon>;
-	roadCells: Set<number> | null; // Road-only cells (async computed)
+	boundary?: Feature<Polygon | MultiPolygon>;
+	roadCells: Set<number> | null;
 	source: "self-hosted" | "nominatim";
-	center?: { lat: number; lng: number }; // Cache center for distance lookups
-	outline?: [number, number][][]; // Simplified outer boundary rings as [lng, lat] polylines
+	center?: { lat: number; lng: number };
+	outline?: [number, number][][];
 }
 
 export interface CityStats {

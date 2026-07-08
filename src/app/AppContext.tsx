@@ -458,20 +458,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			return;
 		}
 
-		if (code && stravaClientRef.current) {
-			try {
-				const success = await stravaClientRef.current.handleCallback(code);
-				if (success) {
-					updateAuthUI();
-					window.history.replaceState({}, document.title, window.location.pathname);
-					// Auto-fetch after auth
-					fetchAndProcessInner();
-				} else {
-					updateAuthUI();
+		if (code) {
+			if (stravaClientRef.current) {
+				try {
+					const success = await stravaClientRef.current.handleCallback(code);
+					if (success) {
+						updateAuthUI();
+						fetchAndProcessInner();
+					} else {
+						updateAuthUI();
+					}
+				} catch (e) {
+					console.error("Auth error:", e);
 				}
-			} catch (e) {
-				console.error("Auth error:", e);
 			}
+			window.history.replaceState({}, document.title, window.location.pathname);
 			return;
 		}
 

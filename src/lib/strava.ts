@@ -78,8 +78,10 @@ export class StravaClient {
 
 		// Try to load existing token
 		const stored = TokenStore.load();
-		if (stored) {
+		if (stored && !TokenStore.isExpired()) {
 			this.accessToken = stored.access_token;
+		} else if (stored) {
+			TokenStore.clear();
 		}
 	}
 
@@ -127,7 +129,7 @@ export class StravaClient {
 				const response = await fetch("/api/strava/token", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ code }),
+					body: JSON.stringify({ code, redirect_uri: this.config.redirectUri }),
 				});
 
 				if (!response.ok) {
@@ -141,6 +143,8 @@ export class StravaClient {
 				console.warn("Direct token exchange - client_secret exposed in frontend!");
 				throw new Error("Direct exchange not implemented - use local server");
 			}
+
+			console.log("Token response scope:", tokenResponse.scope);
 
 			TokenStore.save(tokenResponse);
 			this.accessToken = tokenResponse.access_token;

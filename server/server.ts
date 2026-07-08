@@ -18,6 +18,7 @@ const isProduction = args.includes("--prod") || Bun.env.NODE_ENV === "production
 
 interface TokenRequest {
 	code?: string;
+	redirect_uri?: string;
 	refresh_token?: string;
 }
 
@@ -86,15 +87,20 @@ Bun.serve({
 					);
 				}
 
+				const tokenPayload: Record<string, string> = {
+					client_id: STRAVA_CLIENT_ID,
+					client_secret: STRAVA_CLIENT_SECRET,
+					code: body.code,
+					grant_type: "authorization_code",
+				};
+				if (body.redirect_uri) {
+					tokenPayload.redirect_uri = body.redirect_uri;
+				}
+
 				const tokenResponse = await fetch("https://www.strava.com/oauth/token", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						client_id: STRAVA_CLIENT_ID,
-						client_secret: STRAVA_CLIENT_SECRET,
-						code: body.code,
-						grant_type: "authorization_code",
-					}),
+					body: JSON.stringify(tokenPayload),
 				});
 
 				if (!tokenResponse.ok) {
