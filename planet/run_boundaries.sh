@@ -597,6 +597,7 @@ if ! tippecanoe -o "$WORLD_LOOKUP_PMTILES" \
 	    --force \
 	    --layer=cities \
 	    --minimum-zoom=0 --maximum-zoom=12 \
+	    --no-feature-limit --no-tile-size-limit --drop-densest-as-needed \
 	    --simplification=4 \
 	    --detect-shared-borders \
 	    "${GLOBAL_GEOJSON_FILES[@]}"; then

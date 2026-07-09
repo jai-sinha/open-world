@@ -310,7 +310,8 @@ export class WorldLookup {
 			// Use -1 as sentinel when admin_level is absent so any explicit level wins
 			const effectiveLevel = isNaN(adminLevel) ? -1 : adminLevel;
 
-			if (effectiveLevel > bestAdminLevel) {
+			// Only consider valid city/admin levels (4-8)
+			if (effectiveLevel > bestAdminLevel && effectiveLevel >= 4 && effectiveLevel <= 8) {
 				bestAdminLevel = effectiveLevel;
 				best = {
 					osmId,
