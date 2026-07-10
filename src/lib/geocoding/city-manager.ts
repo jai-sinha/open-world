@@ -98,13 +98,14 @@ export class CityManager {
 					this.viewportStatsResolve?.(payload.percentage);
 					this.viewportStatsResolve = undefined;
 					break;
-				case "ERROR":
-					if (this.activeDiscoveryRunId !== null) {
-						this.activeDiscoveryRunId = null;
-						this.onProgressCallback = undefined;
-						this.discoveryPromiseResolve = undefined;
-					}
-					console.error("[CityManager] worker error:", payload.message);
+			case "ERROR":
+				if (this.activeDiscoveryRunId !== null) {
+					this.activeDiscoveryRunId = null;
+					this.onProgressCallback = undefined;
+					this.discoveryPromiseResolve?.([]);
+					this.discoveryPromiseResolve = undefined;
+				}
+				console.error("[CityManager] worker error:", payload.message);
 					break;
 				default:
 					console.warn("Unknown city worker message type:", (event.data as any)?.type);
@@ -135,6 +136,11 @@ export class CityManager {
 		// Notify start (approximate, worker will refine total)
 		this.notifyDiscoveryStart(0);
 
+		// resolve any hanging promises with empty [] before overwriting
+		if (this.discoveryPromiseResolve) {
+			this.discoveryPromiseResolve([]);
+		}
+
 		return new Promise((resolve) => {
 			this.discoveryPromiseResolve = (stats) => {
 				if (this.activeDiscoveryRunId === null || runId === this.discoveryRunId) {
@@ -160,7 +166,7 @@ export class CityManager {
 		maxLng: number;
 	}): Promise<number> {
 		return new Promise((resolve) => {
-			// Cancel any pending request
+			// Cancel any pending request by resolving with 0
 			if (this.viewportStatsResolve) {
 				this.viewportStatsResolve(0);
 			}

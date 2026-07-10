@@ -29,7 +29,7 @@ import {
 } from "@/features/map/map-state";
 
 // ────────────────────────────────────────────────────────────
-// Types
+// Types & Defaults
 // ────────────────────────────────────────────────────────────
 
 export interface ProgressInfo {
@@ -51,10 +51,6 @@ interface RouteStyleOptions {
 	lineOpacity?: number;
 	colorByType?: boolean;
 }
-
-// ────────────────────────────────────────────────────────────
-// Default config
-// ────────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: ProcessingConfig = {
 	cellSize: 50,
@@ -129,7 +125,8 @@ export function useApp(): AppContextValue {
 // ────────────────────────────────────────────────────────────
 
 export function AppProvider({ children }: { children: ReactNode }) {
-	/* ─── state ─── */
+	// ── State ────────────────────────────────────────────────
+
 	const [isAuthenticated, setIsAuthenticated] = useState(false);
 	const [athlete, setAthlete] = useState<{
 		firstname?: string;
@@ -153,7 +150,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [selectedActivities, setSelectedActivities] = useState<RouteClickFeature[]>([]);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 
-	/* ─── refs ─── */
+	// ── Refs ─────────────────────────────────────────────────
+
 	const mapRef = useRef<MapLibreMap | null>(null);
 	const stravaClientRef = useRef<StravaClient | null>(null);
 	const workerRef = useRef<Worker | null>(null);
@@ -176,7 +174,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const CITY_OUTLINE_SOURCE_ID = "city-outline-highlight";
 	const CITY_OUTLINE_LAYER_ID = "city-outline-highlight-layer";
 
-	// Keep refs in sync with state
+	// ── Ref Sync Effects ─────────────────────────────────────
+
 	useEffect(() => {
 		configRef.current = config;
 	}, [config]);
@@ -189,17 +188,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		isProcessingRef.current = isProcessing;
 	}, [isProcessing]);
 
-	// ──────────────────────────────────────────────────────────
-	// Helpers
-	// ──────────────────────────────────────────────────────────
-
-	const sendWorkerMessage = useCallback((message: WorkerMessage) => {
-		workerRef.current?.postMessage(message);
-	}, []);
-
-	// ──────────────────────────────────────────────────────────
+	// ══════════════════════════════════════════════════════════
 	// Stats
-	// ──────────────────────────────────────────────────────────
+	// ══════════════════════════════════════════════════════════
 
 	const calculateViewportStats = useCallback(async (): Promise<number> => {
 		const map = mapRef.current;
@@ -251,9 +242,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		[calculateViewportStats],
 	);
 
-	// ──────────────────────────────────────────────────────────
+	// ══════════════════════════════════════════════════════════
 	// Persistence
-	// ──────────────────────────────────────────────────────────
+	// ══════════════════════════════════════════════════════════
 
 	const saveCurrentState = useCallback(async () => {
 		try {
@@ -273,9 +264,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		saveTimeoutRef.current = window.setTimeout(() => saveCurrentState(), 2000);
 	}, [saveCurrentState]);
 
-	// ──────────────────────────────────────────────────────────
-	// Map & state update (from worker responses)
-	// ──────────────────────────────────────────────────────────
+	// ══════════════════════════════════════════════════════════
+	// Worker
+	// ══════════════════════════════════════════════════════════
+
+	const sendWorkerMessage = useCallback((message: WorkerMessage) => {
+		workerRef.current?.postMessage(message);
+	}, []);
 
 	const updateMapAndState = useCallback(
 		(data: any) => {
@@ -294,10 +289,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		},
 		[updateStatsUI],
 	);
-
-	// ──────────────────────────────────────────────────────────
-	// Worker message handler
-	// ──────────────────────────────────────────────────────────
 
 	const handleWorkerMessage = useCallback(
 		(response: WorkerResponse) => {
@@ -363,9 +354,213 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		handleWorkerMessageRef.current = handleWorkerMessage;
 	}, [handleWorkerMessage]);
 
-	// ──────────────────────────────────────────────────────────
-	// City outline flash
-	// ──────────────────────────────────────────────────────────
+	// ══════════════════════════════════════════════════════════
+	// Data Processing
+	// ══════════════════════════════════════════════════════════
+
+	const fetchAndProcessInner = useCallback(async () => {
+		const client = stravaClientRef.current;
+		if (!client?.isAuthenticated()) return;
+		if (isProcessingRef.current) return;
+
+		try {
+			setIsProcessing(true);
+
+			const activities = await client.fetchAllActivities((count) => {
+				setProgress({ current: count, total: count, message: `Fetching... ${count}` });
+			});
+
+			allActivitiesRef.current = activities;
+			setAllActivities(activities);
+
+			routeLayerRef.current?.setActivities(activities);
+
+			const latestActivityView = getLatestActivityCenter(activities);
+
+			if (latestActivityView) {
+				mapRef.current?.jumpTo(latestActivityView);
+			} else {
+				console.warn("No activity with valid location data found — skipping jumpTo");
+			}
+
+			cityManagerRef.current?.discoverCitiesFromActivities(activities);
+
+			// Sync worker with full list
+			sendWorkerMessage({ type: "init", data: { activities } });
+			await saveCurrentState();
+
+			const newActivities = activities.filter((a) => !processedActivityIdsRef.current.has(a.id));
+			if (newActivities.length === 0) {
+				setIsProcessing(false);
+				setProgress(null);
+				return;
+			}
+
+			sendWorkerMessage({
+				type: "process",
+				data: { activities: newActivities, batchSize: DEFAULT_BATCH_SIZE },
+			});
+		} catch (error) {
+			console.error("Fetch error:", error);
+			setIsProcessing(false);
+			setProgress(null);
+		}
+	}, [sendWorkerMessage, saveCurrentState]);
+
+	const fetchAndProcessActivities = useCallback(async () => {
+		await fetchAndProcessInner();
+	}, [fetchAndProcessInner]);
+
+	const updateConfigAction = useCallback(
+		(partial: Partial<ProcessingConfig>) => {
+			const newConfig = { ...configRef.current, ...partial };
+			configRef.current = newConfig;
+			setConfig(newConfig);
+
+			if (partial.cellSize && explorationLayerRef.current) {
+				explorationLayerRef.current.setCellSize(partial.cellSize);
+				cityManagerRef.current?.terminate();
+				const cityWorker = new Worker(new URL("../worker/city-processor.ts", import.meta.url), {
+					type: "module",
+				});
+				cityWorker.onerror = (error) => {
+					console.error("City worker error:", error);
+				};
+				cityManagerRef.current = new CityManager(
+					visitedCellsRef.current,
+					newConfig.cellSize,
+					tilesBaseUrlRef.current || undefined,
+					cityWorker,
+				);
+				if (allActivitiesRef.current.length > 0) {
+					cityManagerRef.current.discoverCitiesFromActivities(allActivitiesRef.current);
+				}
+			}
+
+			sendWorkerMessage({ type: "updateConfig", data: newConfig });
+		},
+		[sendWorkerMessage],
+	);
+
+	const updatePrivacySettingsAction = useCallback((settings: PrivacySettings) => {
+		const enabled = settings.enabled;
+		const skipPrivate = settings.skipPrivateActivities;
+
+		const newConfig: ProcessingConfig = {
+			...configRef.current,
+			privacyDistance: enabled ? settings.removeDistance || 400 : 0,
+			snapToGrid: settings.snapToGrid,
+			skipPrivate,
+		};
+
+		configRef.current = newConfig;
+		setConfig(newConfig);
+
+		routeLayerRef.current?.setStyle({
+			showPrivate: !newConfig.skipPrivate,
+		});
+		routeLayerRef.current?.setPrivacyDistance(newConfig.privacyDistance);
+	}, []);
+
+	// ══════════════════════════════════════════════════════════
+	// Auth
+	// ══════════════════════════════════════════════════════════
+
+	const updateAuthUI = useCallback(() => {
+		const client = stravaClientRef.current;
+		if (client?.isAuthenticated()) {
+			setIsAuthenticated(true);
+			const a = client.getAthlete();
+			setAthlete(a ? { firstname: a.firstname, lastname: a.lastname } : null);
+		} else {
+			setIsAuthenticated(false);
+			setAthlete(null);
+		}
+	}, []);
+
+	const authorize = useCallback(() => {
+		stravaClientRef.current?.authorize(["activity:read_all"]);
+	}, []);
+
+	const logout = useCallback(() => {
+		stravaClientRef.current?.logout();
+		setIsAuthenticated(false);
+		setAthlete(null);
+		clearState();
+	}, []);
+
+	const handleAuthCallbackInner = useCallback(async () => {
+		const params = new URLSearchParams(window.location.search);
+		const code = params.get("code");
+		const error = params.get("error");
+
+		if (error) {
+			return;
+		}
+
+		if (code) {
+			if (stravaClientRef.current) {
+				try {
+					const success = await stravaClientRef.current.handleCallback(code);
+					if (success) {
+						updateAuthUI();
+						fetchAndProcessInner();
+					} else {
+						updateAuthUI();
+					}
+				} catch (e) {
+					console.error("Auth error:", e);
+				}
+			}
+			window.history.replaceState({}, document.title, window.location.pathname);
+			return;
+		}
+
+		updateAuthUI();
+	}, [updateAuthUI, fetchAndProcessInner]);
+
+	const initialize = useCallback(async () => {
+		if (initializedRef.current) return;
+		initializedRef.current = true;
+
+		try {
+			// Fetch server config
+			const res = await fetch("/api/config");
+			const serverConfig = await res.json();
+			stravaClientIdRef.current = serverConfig.STRAVA_CLIENT_ID;
+			const tilesUrl = serverConfig.TILES_BASE_URL;
+			tilesBaseUrlRef.current = tilesUrl || "";
+			if (tilesUrl) setRoadPMTilesURL(tilesUrl);
+
+			// Create strava client
+			stravaClientRef.current = createStravaClient({
+				clientId: stravaClientIdRef.current,
+				redirectUri: window.location.origin,
+			});
+
+			const params = new URLSearchParams(window.location.search);
+			const code = params.get("code");
+			const error = params.get("error");
+
+			console.debug("Strava auth initialize", {
+				hasCode: !!code,
+				error,
+				pathname: window.location.pathname,
+			});
+
+			if (code || error) {
+				await handleAuthCallbackInner();
+			} else {
+				updateAuthUI();
+			}
+		} catch (error) {
+			console.error("Failed to initialize:", error);
+		}
+	}, [handleAuthCallbackInner, updateAuthUI]);
+
+	// ══════════════════════════════════════════════════════════
+	// Map & Layers
+	// ══════════════════════════════════════════════════════════
 
 	const flashCityOutline = useCallback((outline: [number, number][][]) => {
 		const map = mapRef.current;
@@ -430,95 +625,81 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		cityOutlineAnimationFrameRef.current = requestAnimationFrame(animate);
 	}, []);
 
-	// ──────────────────────────────────────────────────────────
-	// Auth helpers
-	// ──────────────────────────────────────────────────────────
-
-	const updateAuthUI = useCallback(() => {
-		const client = stravaClientRef.current;
-		if (client?.isAuthenticated()) {
-			setIsAuthenticated(true);
-			const a = client.getAthlete();
-			setAthlete(a ? { firstname: a.firstname, lastname: a.lastname } : null);
-		} else {
-			setIsAuthenticated(false);
-			setAthlete(null);
-		}
+	const jumpToLocation = useCallback((center: [number, number]) => {
+		const view: MapViewState = { center, zoom: 12 };
+		mapRef.current?.jumpTo(view);
 	}, []);
 
-	// ──────────────────────────────────────────────────────────
-	// Actions
-	// ──────────────────────────────────────────────────────────
+	const jumpToCity = useCallback(
+		(payload: { center: [number, number]; outline?: [number, number][][] }) => {
+			const map = mapRef.current;
+			const { center, outline } = payload;
 
-	const handleAuthCallbackInner = useCallback(async () => {
-		const params = new URLSearchParams(window.location.search);
-		const code = params.get("code");
-		const error = params.get("error");
+			if (map && outline && outline.length > 0) {
+				let minLng = Infinity;
+				let minLat = Infinity;
+				let maxLng = -Infinity;
+				let maxLat = -Infinity;
 
-		if (error) {
-			return;
-		}
-
-		if (code) {
-			if (stravaClientRef.current) {
-				try {
-					const success = await stravaClientRef.current.handleCallback(code);
-					if (success) {
-						updateAuthUI();
-						fetchAndProcessInner();
-					} else {
-						updateAuthUI();
+				for (const ring of outline) {
+					for (const [lng, lat] of ring) {
+						if (lng < minLng) minLng = lng;
+						if (lat < minLat) minLat = lat;
+						if (lng > maxLng) maxLng = lng;
+						if (lat > maxLat) maxLat = lat;
 					}
-				} catch (e) {
-					console.error("Auth error:", e);
 				}
-			}
-			window.history.replaceState({}, document.title, window.location.pathname);
-			return;
-		}
 
-		updateAuthUI();
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [updateAuthUI]);
+				if (
+					Number.isFinite(minLng) &&
+					Number.isFinite(minLat) &&
+					Number.isFinite(maxLng) &&
+					Number.isFinite(maxLat)
+				) {
+					map.fitBounds(
+						[
+							[minLng, minLat],
+							[maxLng, maxLat],
+						],
+						{
+							padding: 40,
+							maxZoom: 14,
+							duration: 600,
+						},
+					);
+				} else {
+					map.jumpTo({ center, zoom: 12 });
+				}
 
-	const initialize = useCallback(async () => {
-		if (initializedRef.current) return;
-		initializedRef.current = true;
-
-		try {
-			// Fetch server config
-			const res = await fetch("/api/config");
-			const serverConfig = await res.json();
-			stravaClientIdRef.current = serverConfig.STRAVA_CLIENT_ID;
-			const tilesUrl = serverConfig.TILES_BASE_URL;
-			tilesBaseUrlRef.current = tilesUrl || "";
-			if (tilesUrl) setRoadPMTilesURL(tilesUrl);
-
-			// Create strava client
-			stravaClientRef.current = createStravaClient({
-				clientId: stravaClientIdRef.current,
-				redirectUri: window.location.origin + "",
-			});
-
-			const params = new URLSearchParams(window.location.search);
-			const code = params.get("code");
-			const error = params.get("error");
-
-			console.debug("Strava auth initialize", {
-				hasCode: !!code,
-				error,
-				pathname: window.location.pathname,
-			});
-
-			if (code || error) {
-				await handleAuthCallbackInner();
+				flashCityOutline(outline);
 			} else {
-				updateAuthUI();
+				map?.jumpTo({ center, zoom: 12 });
 			}
-		} catch (error) {
-			console.error("Failed to initialize:", error);
-		}
-	}, [handleAuthCallbackInner, updateAuthUI]);
+		},
+		[flashCityOutline],
+	);
+
+	const setImperialUnitsAction = useCallback((v: boolean) => {
+		setImperialUnitsState(v);
+		routeLayerRef.current?.setUnits(v);
+	}, []);
+
+	const setRouteVisibleAction = useCallback((v: boolean) => {
+		setRouteVisibleState(v);
+		routeLayerRef.current?.setVisibility(v);
+	}, []);
+
+	const setRouteStyleAction = useCallback((style: RouteStyleOptions) => {
+		routeLayerRef.current?.setStyle(style);
+	}, []);
+
+	const setFromDateAction = useCallback((date: Date | null) => {
+		routeLayerRef.current?.setFromDate(date);
+	}, []);
+
+	const setToDateAction = useCallback((date: Date | null) => {
+		routeLayerRef.current?.setToDate(date);
+	}, []);
 
 	const onMapReady = useCallback(
 		(map: MapLibreMap, hydratedState: HydratedMapState | null) => {
@@ -651,142 +832,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		[handleAuthCallbackInner, sendWorkerMessage, updateStatsUI],
 	);
 
-	const authorize = useCallback(() => {
-		stravaClientRef.current?.authorize(["activity:read_all"]);
-	}, []);
-
-	const logout = useCallback(() => {
-		stravaClientRef.current?.logout();
-		setIsAuthenticated(false);
-		setAthlete(null);
-		clearState();
-	}, []);
-
-	const fetchAndProcessInner = useCallback(async () => {
-		const client = stravaClientRef.current;
-		if (!client?.isAuthenticated()) return;
-		if (isProcessingRef.current) return;
-
-		try {
-			setIsProcessing(true);
-
-			const activities = await client.fetchAllActivities((count) => {
-				setProgress({ current: count, total: count, message: `Fetching... ${count}` });
-			});
-
-			allActivitiesRef.current = activities;
-			setAllActivities(activities);
-
-			routeLayerRef.current?.setActivities(activities);
-
-			const latestActivityView = getLatestActivityCenter(activities);
-
-			if (latestActivityView) {
-				mapRef.current?.jumpTo(latestActivityView);
-			} else {
-				console.warn("No activity with valid location data found — skipping jumpTo");
-			}
-
-			cityManagerRef.current?.discoverCitiesFromActivities(activities);
-
-			// Sync worker with full list
-			sendWorkerMessage({ type: "init", data: { activities } });
-			await saveCurrentState();
-
-			const newActivities = activities.filter((a) => !processedActivityIdsRef.current.has(a.id));
-			if (newActivities.length === 0) {
-				setIsProcessing(false);
-				setProgress(null);
-				return;
-			}
-
-			sendWorkerMessage({
-				type: "process",
-				data: { activities: newActivities, batchSize: DEFAULT_BATCH_SIZE },
-			});
-		} catch (error) {
-			console.error("Fetch error:", error);
-			setIsProcessing(false);
-			setProgress(null);
-		}
-	}, [sendWorkerMessage, saveCurrentState]);
-
-	const fetchAndProcessActivities = useCallback(async () => {
-		await fetchAndProcessInner();
-	}, [fetchAndProcessInner]);
-
-	const updatePrivacySettingsAction = useCallback((settings: PrivacySettings) => {
-		const enabled = settings.enabled;
-		const skipPrivate = settings.skipPrivateActivities;
-
-		const newConfig: ProcessingConfig = {
-			...configRef.current,
-			privacyDistance: enabled ? settings.removeDistance || 400 : 0,
-			snapToGrid: settings.snapToGrid,
-			skipPrivate,
-		};
-
-		configRef.current = newConfig;
-		setConfig(newConfig);
-
-		routeLayerRef.current?.setStyle({
-			showPrivate: !newConfig.skipPrivate,
-		});
-		routeLayerRef.current?.setPrivacyDistance(newConfig.privacyDistance);
-	}, []);
-
-	const updateConfigAction = useCallback(
-		(partial: Partial<ProcessingConfig>) => {
-			const newConfig = { ...configRef.current, ...partial };
-			configRef.current = newConfig;
-			setConfig(newConfig);
-
-			if (partial.cellSize && explorationLayerRef.current) {
-				explorationLayerRef.current.setCellSize(partial.cellSize);
-				cityManagerRef.current?.terminate();
-				const cityWorker = new Worker(new URL("../worker/city-processor.ts", import.meta.url), {
-					type: "module",
-				});
-				cityWorker.onerror = (error) => {
-					console.error("City worker error:", error);
-				};
-				cityManagerRef.current = new CityManager(
-					visitedCellsRef.current,
-					newConfig.cellSize,
-					tilesBaseUrlRef.current || undefined,
-					cityWorker,
-				);
-				if (allActivitiesRef.current.length > 0) {
-					cityManagerRef.current.discoverCitiesFromActivities(allActivitiesRef.current);
-				}
-			}
-
-			sendWorkerMessage({ type: "updateConfig", data: newConfig });
-		},
-		[sendWorkerMessage],
-	);
-
-	const setImperialUnitsAction = useCallback((v: boolean) => {
-		setImperialUnitsState(v);
-		routeLayerRef.current?.setUnits(v);
-	}, []);
-
-	const setRouteVisibleAction = useCallback((v: boolean) => {
-		setRouteVisibleState(v);
-		routeLayerRef.current?.setVisibility(v);
-	}, []);
-
-	const setRouteStyleAction = useCallback((style: RouteStyleOptions) => {
-		routeLayerRef.current?.setStyle(style);
-	}, []);
-
-	const setFromDateAction = useCallback((date: Date | null) => {
-		routeLayerRef.current?.setFromDate(date);
-	}, []);
-
-	const setToDateAction = useCallback((date: Date | null) => {
-		routeLayerRef.current?.setToDate(date);
-	}, []);
+	// ══════════════════════════════════════════════════════════
+	// UI Actions
+	// ══════════════════════════════════════════════════════════
 
 	const openSidebarAction = useCallback((activities: RouteClickFeature[]) => {
 		setSelectedActivities(activities);
@@ -798,64 +846,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		setSelectedActivities([]);
 	}, []);
 
-	const jumpToLocation = useCallback((center: [number, number]) => {
-		const view: MapViewState = { center, zoom: 12 };
-		mapRef.current?.jumpTo(view);
-	}, []);
+	// ══════════════════════════════════════════════════════════
+	// Side Effects
+	// ══════════════════════════════════════════════════════════
 
-	const jumpToCity = useCallback(
-		(payload: { center: [number, number]; outline?: [number, number][][] }) => {
-			const map = mapRef.current;
-			const { center, outline } = payload;
-
-			if (map && outline && outline.length > 0) {
-				let minLng = Infinity;
-				let minLat = Infinity;
-				let maxLng = -Infinity;
-				let maxLat = -Infinity;
-
-				for (const ring of outline) {
-					for (const [lng, lat] of ring) {
-						if (lng < minLng) minLng = lng;
-						if (lat < minLat) minLat = lat;
-						if (lng > maxLng) maxLng = lng;
-						if (lat > maxLat) maxLat = lat;
-					}
-				}
-
-				if (
-					Number.isFinite(minLng) &&
-					Number.isFinite(minLat) &&
-					Number.isFinite(maxLng) &&
-					Number.isFinite(maxLat)
-				) {
-					map.fitBounds(
-						[
-							[minLng, minLat],
-							[maxLng, maxLat],
-						],
-						{
-							padding: 40,
-							maxZoom: 14,
-							duration: 600,
-						},
-					);
-				} else {
-					map.jumpTo({ center, zoom: 12 });
-				}
-
-				flashCityOutline(outline);
-			} else {
-				map?.jumpTo({ center, zoom: 12 });
-			}
-		},
-		[flashCityOutline],
-	);
-
-	// ──────────────────────────────────────────────────────────
 	// City discovery events (window custom events)
-	// ──────────────────────────────────────────────────────────
-
 	useEffect(() => {
 		const onStart = () => {
 			setCityDiscoveryProgress(0);
@@ -896,10 +891,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		};
 	}, []);
 
-	// ──────────────────────────────────────────────────────────
 	// Cleanup on unmount
-	// ──────────────────────────────────────────────────────────
-
 	useEffect(() => {
 		return () => {
 			if (saveTimeoutRef.current) {
@@ -957,9 +949,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		};
 	}, []);
 
-	// ──────────────────────────────────────────────────────────
-	// Context value (memoized)
-	// ──────────────────────────────────────────────────────────
+	// ══════════════════════════════════════════════════════════
+	// Context Value & Render
+	// ══════════════════════════════════════════════════════════
 
 	const value = useMemo<AppContextValue>(
 		() => ({

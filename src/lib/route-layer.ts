@@ -159,14 +159,17 @@ export class RouteOverlayLayer {
 		// Only update content if the set of features changed
 		if (featureIds !== this.currentFeatureIds) {
 			this.currentFeatureIds = featureIds;
+			// escape the activity name + type to prevent html xss
+			const escape = (s: string) =>
+				s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 			this.tooltip.innerHTML = features
 				.map((f) => {
 					const p = f.properties!;
 					return `
 								<div style="padding: 4px 0; border-bottom: 1px solid #eee;">
-									<div style="font-weight: 600;">${p.name}</div>
+									<div style="font-weight: 600;">${escape(p.name)}</div>
 									<div style="color: #666;">
-										${p.type} · ${this.options.imperialUnits ? (p.distance / 1609.344).toFixed(2) + " mi" : (p.distance / 1000).toFixed(2) + " km"} · ${new Date(p.date).toLocaleDateString()}
+										${escape(p.type)} · ${this.options.imperialUnits ? (p.distance / 1609.344).toFixed(2) + " mi" : (p.distance / 1000).toFixed(2) + " km"} · ${escape(new Date(p.date).toLocaleDateString())}
 									</div>
 								</div>
 							`;
