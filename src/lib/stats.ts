@@ -52,7 +52,6 @@ export function computeCityStats(cities: Iterable<City>, visitedCells: Set<numbe
 				totalCells: city.roadCells.size,
 				visitedCount,
 				percentage: city.roadCells.size === 0 ? 0 : (visitedCount / city.roadCells.size) * 100,
-				source: city.source,
 				center: city.center,
 				outline: city.outline,
 			});

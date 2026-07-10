@@ -3,31 +3,32 @@ import type { StravaActivity } from "../types";
 import { computeCityStats, computeVisitedPercentageForCells } from "../lib/stats";
 import { getRoadCellsForBbox } from "../lib/tiles";
 import { WorldLookup } from "../lib/geocoding/world-lookup";
-import { openDB, type IDBPDatabase, type DBSchema } from "idb";
 
-// IndexedDB schema for city road cells cache
+// ─── IndexedDB cache for city road cells ───
+
+import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+
 interface CityRoadCellsDB extends DBSchema {
 	cityRoadCells: {
-		key: string; // osmId
+		key: string;
 		value: {
 			osmId: string;
-			roadCells: Int32Array; // interleaved x,y pairs of packed integer cells
+			roadCells: Int32Array;
 			cellSize: number;
 			timestamp: number;
 		};
 	};
 }
 
+const ROAD_CELLS_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
 let roadCellsDb: IDBPDatabase<CityRoadCellsDB> | null = null;
-const ROAD_CELLS_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 async function getRoadCellsDb(): Promise<IDBPDatabase<CityRoadCellsDB>> {
 	if (roadCellsDb) return roadCellsDb;
 	roadCellsDb = await openDB<CityRoadCellsDB>("city-road-cells", 2, {
-		upgrade(db, _oldVersion, _newVersion, transaction) {
-			if (db.objectStoreNames.contains("cityRoadCells")) {
-				transaction.objectStore("cityRoadCells").clear();
-			} else {
+		upgrade(db) {
+			if (!db.objectStoreNames.contains("cityRoadCells")) {
 				db.createObjectStore("cityRoadCells", { keyPath: "osmId" });
 			}
 		},
@@ -35,15 +36,14 @@ async function getRoadCellsDb(): Promise<IDBPDatabase<CityRoadCellsDB>> {
 	return roadCellsDb;
 }
 
-async function getCachedRoadCells(osmId: string, cellSize: number): Promise<Set<number> | null> {
+async function getCachedRoadCells(
+	osmId: string,
+	cellSize: number,
+): Promise<Set<number> | null> {
 	try {
 		const db = await getRoadCellsDb();
 		const record = await db.get("cityRoadCells", osmId);
-		if (
-			record &&
-			record.cellSize === cellSize &&
-			Date.now() - record.timestamp < ROAD_CELLS_CACHE_MAX_AGE_MS
-		) {
+		if (record && record.cellSize === cellSize && Date.now() - record.timestamp < ROAD_CELLS_CACHE_MAX_AGE_MS) {
 			const cells = new Set<number>();
 			for (let i = 0; i < record.roadCells.length; i += 2) {
 				cells.add(packCell(record.roadCells[i], record.roadCells[i + 1]));
@@ -51,7 +51,7 @@ async function getCachedRoadCells(osmId: string, cellSize: number): Promise<Set<
 			return cells;
 		}
 	} catch (e) {
-		console.warn("Failed to read road cells from cache:", e);
+		console.warn("Failed to read cached road cells:", e);
 	}
 	return null;
 }
@@ -63,16 +63,16 @@ async function cacheRoadCells(
 ): Promise<void> {
 	try {
 		const db = await getRoadCellsDb();
-		const arr = new Int32Array(roadCells.size * 2);
+		const pairs = new Int32Array(roadCells.size * 2);
 		let i = 0;
 		for (const v of roadCells) {
 			const { x, y } = unpackCell(v);
-			arr[i++] = x;
-			arr[i++] = y;
+			pairs[i++] = x;
+			pairs[i++] = y;
 		}
 		await db.put("cityRoadCells", {
 			osmId,
-			roadCells: arr,
+			roadCells: pairs,
 			cellSize,
 			timestamp: Date.now(),
 		});
@@ -81,21 +81,16 @@ async function cacheRoadCells(
 	}
 }
 
-type OutlinePolyline = Array<[number, number]>;
-
-// Constants
-const DEFAULT_TILES_BASE_URL = "https://tiles.jsinha.com";
+// ─── Types ───
 
 export interface City {
 	id: string;
 	osmId: string;
 	name: string;
 	displayName: string;
-	outline: OutlinePolyline[];
+	outline: [number, number][][];
 	roadCells: Set<number> | null;
 	roadTiles: string;
-	shard: string;
-	source: "self-hosted";
 	center?: { lat: number; lng: number };
 }
 
@@ -105,12 +100,10 @@ export interface CityStats {
 	totalCells: number;
 	visitedCount: number;
 	percentage: number;
-	source: "self-hosted";
 	center?: { lat: number; lng: number };
-	outline?: OutlinePolyline[];
+	outline?: [number, number][][];
 }
 
-// Worker Message Types
 export type CityProcessorMessage =
 	| {
 			type: "DISCOVER_CITIES";
@@ -118,14 +111,12 @@ export type CityProcessorMessage =
 				activities: StravaActivity[];
 				visitedCells: number[];
 				cellSize: number;
-				tilesBaseUrl?: string;
+				tilesBaseUrl: string;
 			};
 	  }
 	| {
 			type: "UPDATE_VISITED_CELLS";
-			payload: {
-				visitedCells: number[];
-			};
+			payload: { visitedCells: number[] };
 	  }
 	| {
 			type: "CALCULATE_VIEWPORT_STATS";
@@ -136,22 +127,12 @@ export type CityProcessorMessage =
 	  };
 
 export type CityProcessorResponse =
-	| {
-			type: "PROGRESS";
-			payload: { percentage: number };
-	  }
-	| {
-			type: "COMPLETE";
-			payload: { stats: CityStats[] };
-	  }
-	| {
-			type: "STATS_UPDATE";
-			payload: { stats: CityStats[] };
-	  }
-	| {
-			type: "VIEWPORT_STATS";
-			payload: { percentage: number };
-	  };
+	| { type: "PROGRESS"; payload: { percentage: number } }
+	| { type: "COMPLETE"; payload: { stats: CityStats[] } }
+	| { type: "STATS_UPDATE"; payload: { stats: CityStats[] } }
+	| { type: "VIEWPORT_STATS"; payload: { percentage: number } };
+
+// ─── CityProcessor ───
 
 class CityProcessor {
 	private cities = new Map<string, City>();
@@ -160,28 +141,21 @@ class CityProcessor {
 	private isProcessing = false;
 	private pendingDiscoveryActivities: StravaActivity[] | null = null;
 
-	// Discovery progress tracking (two phases: location discovery, then road cell computation)
 	private locationTotal = 0;
 	private locationProcessed = 0;
 	private roadCellTotal = 0;
 	private roadCellProcessed = 0;
 
-	private tilesBaseUrl = DEFAULT_TILES_BASE_URL;
-	private shardIndex: Map<string, string> = new Map();
-	private shardIndexLoaded = false;
-
-	private worldLookup: WorldLookup;
-
-	constructor() {
-		this.worldLookup = new WorldLookup(`${this.tilesBaseUrl}/world-lookup.pmtiles`);
-	}
+	private tilesBaseUrl = "";
+	private worldLookup: WorldLookup | null = null;
+	private shardIndex: Map<string, string> | null = null;
 
 	public async handleMessage(event: MessageEvent<CityProcessorMessage>) {
 		const { type, payload } = event.data;
 
 		switch (type) {
 			case "DISCOVER_CITIES":
-				if (payload.tilesBaseUrl) await this.setTilesBaseUrl(payload.tilesBaseUrl);
+				await this.initTiles(payload.tilesBaseUrl);
 				this.visitedCells = new Set<number>(payload.visitedCells);
 				this.cellSize = payload.cellSize;
 				this.discoverCitiesFromActivities(payload.activities);
@@ -196,6 +170,15 @@ class CityProcessor {
 		}
 	}
 
+	private async initTiles(url: string) {
+		const trimmed = url.replace(/\/+$/, "");
+		if (trimmed === this.tilesBaseUrl && this.worldLookup) return;
+		this.tilesBaseUrl = trimmed;
+		this.worldLookup = new WorldLookup(`${this.tilesBaseUrl}/world-lookup.pmtiles`);
+		this.shardIndex = null;
+		await this.loadShardIndex();
+	}
+
 	private async loadShardIndex() {
 		try {
 			const url = `${this.tilesBaseUrl}/city-dataset/city-shard-index.json`;
@@ -203,21 +186,10 @@ class CityProcessor {
 			if (res.ok) {
 				const data = (await res.json()) as Record<string, string>;
 				this.shardIndex = new Map(Object.entries(data));
-				this.shardIndexLoaded = true;
 			}
 		} catch (e) {
 			console.warn("Failed to load shard index:", e);
 		}
-	}
-
-	private async setTilesBaseUrl(url?: string) {
-		if (!url) return;
-		console.log(url);
-		const trimmed = url.replace(/\/+$/, "");
-		if (trimmed === this.tilesBaseUrl && this.shardIndexLoaded) return;
-		this.tilesBaseUrl = trimmed;
-		await this.loadShardIndex();
-		this.worldLookup = new WorldLookup(`${this.tilesBaseUrl}/world-lookup.pmtiles`);
 	}
 
 	private async calculateViewportStats(
@@ -234,60 +206,41 @@ class CityProcessor {
 			if (closestCity) {
 				roadTilesFile = closestCity.roadTiles;
 			} else {
-				const lookupResult = await this.worldLookup.query(centerLat, centerLng);
+				const lookupResult = await this.worldLookup?.query(centerLat, centerLng);
 				if (!lookupResult || !lookupResult.roadTiles) {
-					self.postMessage({
-						type: "VIEWPORT_STATS",
-						payload: { percentage: 0 },
-					});
+					self.postMessage({ type: "VIEWPORT_STATS", payload: { percentage: 0 } });
 					return;
 				}
 				roadTilesFile = lookupResult.roadTiles;
 			}
 
 			const { PMTiles } = await import("pmtiles");
-			const base = this.tilesBaseUrl || DEFAULT_TILES_BASE_URL;
-			const pmtiles = new PMTiles(`${base}/${roadTilesFile}`);
+			const pmtiles = new PMTiles(`${this.tilesBaseUrl}/${roadTilesFile}`);
 
 			const roadCells = await getRoadCellsForBbox(
-				bounds.minLat,
-				bounds.maxLat,
-				bounds.minLng,
-				bounds.maxLng,
-				cellSize,
-				14,
-				true,
-				pmtiles,
+				bounds.minLat, bounds.maxLat, bounds.minLng, bounds.maxLng,
+				cellSize, 14, true, pmtiles,
 			);
-
-			const percentage = computeVisitedPercentageForCells(roadCells, this.visitedCells);
 
 			self.postMessage({
 				type: "VIEWPORT_STATS",
-				payload: { percentage },
+				payload: { percentage: computeVisitedPercentageForCells(roadCells, this.visitedCells) },
 			});
 		} catch (e) {
 			console.warn("Failed to calculate viewport stats in worker:", e);
-			self.postMessage({
-				type: "VIEWPORT_STATS",
-				payload: { percentage: 0 },
-			});
+			self.postMessage({ type: "VIEWPORT_STATS", payload: { percentage: 0 } });
 		}
 	}
 
 	private findClosestCity(lat: number, lng: number): City | null {
 		let closest: City | null = null;
 		let minDist = Infinity;
-
 		for (const city of this.cities.values()) {
 			if (!city.center) continue;
 			const dLat = city.center.lat - lat;
 			const dLng = city.center.lng - lng;
 			const dist = dLat * dLat + dLng * dLng;
-			if (dist < minDist) {
-				minDist = dist;
-				closest = city;
-			}
+			if (dist < minDist) { minDist = dist; closest = city; }
 		}
 		return closest;
 	}
@@ -298,7 +251,6 @@ class CityProcessor {
 			return;
 		}
 		this.isProcessing = true;
-
 		this.locationTotal = 0;
 		this.locationProcessed = 0;
 		this.roadCellTotal = 0;
@@ -307,7 +259,6 @@ class CityProcessor {
 		try {
 			const uniqueLocations = this.groupActivitiesByLocation(activities);
 			this.locationTotal = uniqueLocations.length;
-
 			this.postProgress();
 
 			const BATCH_SIZE = 10;
@@ -338,44 +289,52 @@ class CityProcessor {
 			if (!activity.start_latlng || activity.start_latlng.length < 2) continue;
 			const [lat, lng] = activity.start_latlng;
 			const key = `${lat.toFixed(1)},${lng.toFixed(1)}`;
-			if (!locations.has(key)) {
-				locations.set(key, [lat, lng]);
-			}
+			if (!locations.has(key)) locations.set(key, [lat, lng]);
 		}
 		return Array.from(locations.values());
 	}
 
 	private async identifyCity(lat: number, lng: number) {
 		try {
+			if (!this.worldLookup) return;
 			const result = await this.worldLookup.query(lat, lng);
 			if (!result || !result.osmId || !result.name) return;
 
 			const cityId = result.osmId;
 			if (this.cities.has(cityId)) return;
 
-			const shard = this.shardIndex.get(cityId);
-			if (!shard) return;
+			const base = this.tilesBaseUrl;
 
-			const base = this.tilesBaseUrl || DEFAULT_TILES_BASE_URL;
-
+			// Fetch pre-computed road cells from city-dataset (.bin files generated
+			// by run_city_dataset.sh / city_road_cells_assigner, clipped to exact
+			// city boundary polygon).
 			let roadCells: Set<number>;
-			const cachedCells = await getCachedRoadCells(cityId, this.cellSize);
-			if (cachedCells) {
-				roadCells = cachedCells;
+			const cached = await getCachedRoadCells(cityId, this.cellSize);
+			if (cached) {
+				roadCells = cached;
 			} else {
-				const binUrl = `${base}/city-dataset/city-road-cells/${shard}/${cityId}.bin`;
-				const res = await fetch(binUrl);
-				if (!res.ok) return;
-				const buf = await res.arrayBuffer();
-				const ints = new Int32Array(buf);
-				roadCells = new Set<number>();
-				for (let i = 0; i < ints.length; i += 2) {
-					roadCells.add(packCell(ints[i], ints[i + 1]));
+				const shard = this.shardIndex?.get(cityId);
+				if (shard) {
+					const binUrl = `${base}/city-dataset/city-road-cells/${shard}/${cityId}.bin`;
+					const res = await fetch(binUrl);
+					if (res.ok) {
+						const buf = await res.arrayBuffer();
+						const ints = new Int32Array(buf);
+						roadCells = new Set<number>();
+						for (let i = 0; i < ints.length; i += 2) {
+							roadCells.add(packCell(ints[i], ints[i + 1]));
+						}
+						cacheRoadCells(cityId, roadCells, this.cellSize).catch(console.warn);
+					} else {
+						return;
+					}
+				} else {
+					return;
 				}
-				cacheRoadCells(cityId, roadCells, this.cellSize).catch(console.warn);
 			}
 
-			let outline: OutlinePolyline[] = [];
+			// Fetch boundary outline from city-dataset
+			let outline: [number, number][][] = [];
 			try {
 				const outlineUrl = `${base}/city-dataset/outlines/${cityId}.json`;
 				const outlineRes = await fetch(outlineUrl);
@@ -393,8 +352,6 @@ class CityProcessor {
 				outline,
 				roadCells,
 				roadTiles: result.roadTiles,
-				shard,
-				source: "self-hosted",
 				center: { lat, lng },
 			};
 
@@ -409,30 +366,22 @@ class CityProcessor {
 	}
 
 	private postProgress() {
-		// Combine both phases into a single progress percentage
-		// Phase 1: location discovery (weight: 30%)
-		// Phase 2: road cell computation (weight: 70%)
 		const locationWeight = 0.3;
 		const roadCellWeight = 0.7;
-
 		const locationProgress =
 			this.locationTotal > 0 ? (this.locationProcessed / this.locationTotal) * locationWeight : 0;
 		const roadCellProgress =
 			this.roadCellTotal > 0 ? (this.roadCellProcessed / this.roadCellTotal) * roadCellWeight : 0;
-
-		const percentage = (locationProgress + roadCellProgress) * 100;
-
 		self.postMessage({
 			type: "PROGRESS",
-			payload: { percentage },
+			payload: { percentage: (locationProgress + roadCellProgress) * 100 },
 		});
 	}
 
 	private postStats(type: "COMPLETE" | "STATS_UPDATE") {
-		const stats = computeCityStats(this.cities.values(), this.visitedCells);
 		self.postMessage({
 			type,
-			payload: { stats },
+			payload: { stats: computeCityStats(this.cities.values(), this.visitedCells) },
 		});
 	}
 }

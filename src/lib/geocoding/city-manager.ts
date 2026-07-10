@@ -9,7 +9,6 @@ export interface City {
 	displayName: string;
 	boundary?: Feature<Polygon | MultiPolygon>;
 	roadCells: Set<number> | null;
-	source: "self-hosted" | "nominatim";
 	center?: { lat: number; lng: number };
 	outline?: [number, number][][];
 }
@@ -20,9 +19,8 @@ export interface CityStats {
 	totalCells: number;
 	visitedCount: number;
 	percentage: number;
-	source: "self-hosted" | "nominatim";
 	center?: { lat: number; lng: number };
-	outline?: [number, number][][]; // Simplified outer boundary rings as [lng, lat] polylines
+	outline?: [number, number][][];
 }
 
 // Worker Message Types (Internal)

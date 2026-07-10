@@ -489,7 +489,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			const res = await fetch("/api/config");
 			const serverConfig = await res.json();
 			stravaClientIdRef.current = serverConfig.STRAVA_CLIENT_ID;
-			const tilesUrl = serverConfig.TILES_BASE_URL || serverConfig.ROAD_PM_TILES_URL;
+			const tilesUrl = serverConfig.TILES_BASE_URL;
 			tilesBaseUrlRef.current = tilesUrl || "";
 			if (tilesUrl) setRoadPMTilesURL(tilesUrl);
 
@@ -497,7 +497,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			stravaClientRef.current = createStravaClient({
 				clientId: stravaClientIdRef.current,
 				redirectUri: window.location.origin + "",
-				useLocalServer: true,
 			});
 
 			const params = new URLSearchParams(window.location.search);

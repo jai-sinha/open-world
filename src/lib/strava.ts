@@ -9,7 +9,6 @@ const STRAVA_AUTH_BASE = "https://www.strava.com/oauth";
 export interface StravaConfig {
 	clientId: string;
 	redirectUri: string;
-	useLocalServer: boolean; // true if using local OAuth exchange server
 }
 
 /**
@@ -122,29 +121,18 @@ export class StravaClient {
 	 */
 	async handleCallback(code: string): Promise<boolean> {
 		try {
-			let tokenResponse: StravaTokenResponse;
 
-			if (this.config.useLocalServer) {
-				// Exchange via local server endpoint
-				const response = await fetch("/api/strava/token", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ code, redirect_uri: this.config.redirectUri }),
-				});
+			const response = await fetch("/api/strava/token", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ code, redirect_uri: this.config.redirectUri }),
+			});
 
-				if (!response.ok) {
-					throw new Error("Token exchange failed");
-				}
-
-				tokenResponse = await response.json();
-			} else {
-				// Direct exchange (requires client_secret in frontend - NOT RECOMMENDED for production)
-				// This is only for development/testing
-				console.warn("Direct token exchange - client_secret exposed in frontend!");
-				throw new Error("Direct exchange not implemented - use local server");
+			if (!response.ok) {
+				throw new Error("Token exchange failed");
 			}
 
-			console.log("Token response scope:", tokenResponse.scope);
+			let tokenResponse = await response.json();
 
 			TokenStore.save(tokenResponse);
 			this.accessToken = tokenResponse.access_token;
@@ -343,4 +331,3 @@ export function getStravaClient(): StravaClient | null {
 export function resetClient(): void {
 	clientInstance = null;
 }
-
