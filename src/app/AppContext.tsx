@@ -91,6 +91,7 @@ interface AppContextValue {
 	cityDiscoveryProgress: number;
 	selectedActivities: RouteClickFeature[];
 	sidebarOpen: boolean;
+	tilesBaseUrl: string;
 
 	/* ─── actions ─── */
 	initialize: () => Promise<void>;
@@ -976,6 +977,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			cityDiscoveryProgress,
 			selectedActivities,
 			sidebarOpen,
+			tilesBaseUrl: tilesBaseUrlRef.current,
 			// actions
 			initialize,
 			onMapReady,
