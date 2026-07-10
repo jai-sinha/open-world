@@ -62,7 +62,6 @@ export interface ProcessingConfig {
 	cellSize: number; // meters
 	samplingStep: number; // meters
 	privacyDistance: number; // meters to remove from start/end
-	snapToGrid: boolean;
 	skipPrivate: boolean;
 }
 
@@ -109,7 +108,6 @@ export interface MapBounds {
 export interface PrivacySettings {
 	enabled: boolean;
 	removeDistance: number; // meters
-	snapToGrid: boolean;
 	skipPrivateActivities: boolean;
 }
 

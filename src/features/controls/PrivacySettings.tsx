@@ -13,7 +13,6 @@ export default function PrivacySettings() {
 		updatePrivacySettings({
 			enabled: checked,
 			removeDistance: checked ? config.privacyDistance || 200 : 0,
-			snapToGrid: config.snapToGrid,
 			skipPrivateActivities: skipPrivate,
 		});
 	};
@@ -23,7 +22,6 @@ export default function PrivacySettings() {
 		updatePrivacySettings({
 			enabled: hideStartFinish,
 			removeDistance: hideStartFinish ? config.privacyDistance || 200 : 0,
-			snapToGrid: config.snapToGrid,
 			skipPrivateActivities: checked,
 		});
 	};

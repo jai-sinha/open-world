@@ -60,7 +60,6 @@ export class RouteOverlayLayer {
 	private layerId = "strava-routes-layer";
 	private activities: StravaActivity[] = [];
 	private options: InternalRouteLayerOptions;
-	private visible = true;
 	private tooltip: HTMLDivElement | null = null;
 	private currentFeatureIds: string = "";
 
@@ -269,39 +268,17 @@ export class RouteOverlayLayer {
 		this.updateSource(this.activities);
 	}
 
-	addActivities(activities: StravaActivity[]): void {
-		const existingIds = new Set(this.activities.map((a) => a.id));
-		this.activities.push(...activities.filter((a) => !existingIds.has(a.id)));
-		this.updateSource(this.activities);
-	}
-
 	clear(): void {
 		this.activities = [];
 		this.updateSource([]);
 	}
 
-	filterByType(types: string[]): void {
-		this.updateSource(this.activities.filter((a) => types.includes(a.type)));
-	}
-
 	setVisibility(visible: boolean): void {
-		this.visible = visible;
 		this.map.setLayoutProperty(this.layerId, "visibility", visible ? "visible" : "none");
 	}
 
 	setUnits(imperial: boolean): void {
 		this.options.imperialUnits = imperial;
-	}
-
-	/**
-	 * Return whether the layer is configured to use imperial units
-	 */
-	isImperialUnits(): boolean {
-		return this.options.imperialUnits;
-	}
-
-	isVisible(): boolean {
-		return this.visible;
 	}
 
 	setStyle(style: Partial<RouteLayerOptions>): void {
@@ -328,10 +305,6 @@ export class RouteOverlayLayer {
 	setPrivacyDistance(distance: number): void {
 		this.options.privacyDistance = distance;
 		this.updateSource(this.activities);
-	}
-
-	getActivityCount(): number {
-		return this.activities.length;
 	}
 
 	remove(): void {

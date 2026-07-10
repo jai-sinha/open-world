@@ -93,16 +93,10 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 		this.map = undefined;
 	}
 
+	// these two are necessary for CustomLayerInterface implementation
 	render: CustomRenderMethod = (_gl, _matrix) => {
-		// This method is called for WebGL rendering mode
-		// We use the 2d rendering mode instead (see below)
 	};
-
-	/**
-	 * Main render method for 2D canvas
-	 */
 	prerender?: CustomRenderMethod = (_gl, _matrix) => {
-		// Optional pre-render hook
 	};
 
 	/**

@@ -2,7 +2,7 @@
 // This is the core algorithm for efficient exploration visualization
 
 import type { Rectangle } from "../types";
-import { packCell, getCellBounds, CELL_OFFSET, CELL_MULTIPLIER } from "./projection";
+import { packCell, CELL_OFFSET, CELL_MULTIPLIER } from "./projection";
 
 /**
  * Merge contiguous cells into rectangles for efficient rendering.
@@ -133,31 +133,6 @@ function mergeVerticalRectangles(rectangles: Rectangle[]): Rectangle[] {
 }
 
 /**
- * Fast check if a point is in any rectangle
- */
-export function isPointInRectangles(x: number, y: number, rectangles: Rectangle[]): boolean {
-	for (const rect of rectangles) {
-		if (x >= rect.minX && x <= rect.maxX && y >= rect.minY && y <= rect.maxY) {
-			return true;
-		}
-	}
-	return false;
-}
-
-/**
- * Get all cells touched by a rectangle
- */
-export function rectangleToCells(rect: Rectangle): Set<number> {
-	const cells = new Set<number>();
-	for (let y = rect.minY; y <= rect.maxY; y++) {
-		for (let x = rect.minX; x <= rect.maxX; x++) {
-			cells.add(packCell(x, y));
-		}
-	}
-	return cells;
-}
-
-/**
  * Compute statistics about grid coverage
  */
 export interface GridStats {
@@ -166,16 +141,4 @@ export interface GridStats {
 	averageRectangleSize: number;
 	compressionRatio: number;
 	bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
-}
-
-export function computeGridStats(cells: Set<number>, rectangles: Rectangle[]): GridStats {
-	const bounds = getCellBounds(cells);
-
-	return {
-		totalCells: cells.size,
-		rectangleCount: rectangles.length,
-		averageRectangleSize: cells.size / Math.max(rectangles.length, 1),
-		compressionRatio: rectangles.length / Math.max(cells.size, 1),
-		bounds,
-	};
 }

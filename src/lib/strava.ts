@@ -268,45 +268,6 @@ export class StravaClient {
 
 		return response.json();
 	}
-
-	/**
-	 * Get current rate limit status
-	 */
-	async getRateLimitStatus(): Promise<{
-		shortTerm: { limit: number; usage: number };
-		longTerm: { limit: number; usage: number };
-	} | null> {
-		if (!this.accessToken) {
-			return null;
-		}
-
-		try {
-			const response = await fetch(`${STRAVA_API_BASE}/athlete`, {
-				headers: {
-					Authorization: `Bearer ${this.accessToken}`,
-				},
-			});
-
-			const shortLimit = response.headers.get("X-RateLimit-Limit")?.split(",")[0];
-			const shortUsage = response.headers.get("X-RateLimit-Usage")?.split(",")[0];
-			const longLimit = response.headers.get("X-RateLimit-Limit")?.split(",")[1];
-			const longUsage = response.headers.get("X-RateLimit-Usage")?.split(",")[1];
-
-			return {
-				shortTerm: {
-					limit: shortLimit ? parseInt(shortLimit) : 100,
-					usage: shortUsage ? parseInt(shortUsage) : 0,
-				},
-				longTerm: {
-					limit: longLimit ? parseInt(longLimit) : 1000,
-					usage: longUsage ? parseInt(longUsage) : 0,
-				},
-			};
-		} catch (error) {
-			console.error("Failed to get rate limit status:", error);
-			return null;
-		}
-	}
 }
 
 /**
@@ -319,15 +280,4 @@ export function createStravaClient(config: StravaConfig): StravaClient {
 		clientInstance = new StravaClient(config);
 	}
 	return clientInstance;
-}
-
-export function getStravaClient(): StravaClient | null {
-	return clientInstance;
-}
-
-/**
- * Reset singleton instance
- */
-export function resetClient(): void {
-	clientInstance = null;
 }
