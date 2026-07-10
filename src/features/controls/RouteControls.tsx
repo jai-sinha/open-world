@@ -250,24 +250,35 @@ function DualRangeSlider({
 				minDistance={0}
 				ariaLabel={["Start date", "End date"]}
 				ariaValuetext={(state: { valueNow: number }) => `Thumb value ${state.valueNow}`}
-				renderTrack={(props: React.HTMLAttributes<HTMLDivElement>, state: { index: number }) => (
-					<div
-						{...props}
-						className={`dual-range-slider-track position-absolute ${
-							state.index === 1 ? "bg-primary" : "bg-secondary bg-opacity-25"
-						}`}
-					/>
-				)}
-				renderThumb={(
-					props: React.HTMLAttributes<HTMLDivElement> & { style?: React.CSSProperties },
-					state: { index: number },
-				) => (
-					<div
-						{...props}
-						className="dual-range-slider-thumb position-absolute bg-white border border-primary shadow-sm"
-						aria-label={state.index === 0 ? "Start date" : "End date"}
-					/>
-				)}
+				renderTrack={(props, state) => {
+					const { key, ...rest } = props as React.HTMLAttributes<HTMLDivElement> & {
+						key?: React.Key;
+					};
+
+					return (
+						<div
+							key={key}
+							{...rest}
+							className={`dual-range-slider-track position-absolute ${
+									state.index === 1 ? "bg-primary" : "bg-secondary bg-opacity-25"
+							}`}
+						/>
+					);
+				}}
+				renderThumb={(props, state) => {
+					const { key, ...rest } = props as React.HTMLAttributes<HTMLDivElement> & {
+						key?: React.Key;
+					};
+
+					return (
+						<div
+							key={key}
+							{...rest}
+							className="dual-range-slider-thumb position-absolute bg-white border border-primary shadow-sm"
+							aria-label={state.index === 0 ? "Start date" : "End date"}
+						/>
+					);
+				}}
 			/>
 		</div>
 	);
