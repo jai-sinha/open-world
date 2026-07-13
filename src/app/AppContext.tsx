@@ -19,6 +19,7 @@ import type {
 import { createStravaClient, StravaClient } from "@/lib/strava";
 import { saveState, clearState } from "@/lib/storage";
 import { createExplorationLayer, ExplorationCanvasLayer } from "@/lib/canvas-layer";
+import { CELL_SIZE } from "@/lib/projection";
 import { createRouteOverlay, RouteOverlayLayer, type RouteClickFeature } from "@/lib/route-layer";
 import { CityManager, type CityStats } from "@/lib/geocoding/city-manager";
 import { setRoadPMTilesURL } from "@/lib/tiles";
@@ -53,10 +54,8 @@ interface RouteStyleOptions {
 }
 
 const DEFAULT_CONFIG: ProcessingConfig = {
-	cellSize: 50,
 	samplingStep: 25,
 	privacyDistance: 0,
-	snapToGrid: false,
 	skipPrivate: false,
 };
 
@@ -235,7 +234,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				cells,
 				activities: processedActivityIdsRef.current.size,
 				distance: totalDistanceKm,
-				area: (cells * Math.pow(configRef.current.cellSize, 2)) / 1_000_000,
+				area: (cells * Math.pow(CELL_SIZE, 2)) / 1_000_000,
 				viewportExplored: viewportStats,
 			});
 		},
@@ -263,6 +262,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 		saveTimeoutRef.current = window.setTimeout(() => saveCurrentState(), 2000);
 	}, [saveCurrentState]);
+
+	// ══════════════════════════════════════════════════════════
+	// Config
+	// ══════════════════════════════════════════════════════════
+
+	const applyConfig = useCallback((partial: Partial<ProcessingConfig>) => {
+		const newConfig = { ...configRef.current, ...partial };
+		configRef.current = newConfig;
+		setConfig(newConfig);
+		workerRef.current?.postMessage({ type: "updateConfig", data: newConfig });
+	}, []);
 
 	// ══════════════════════════════════════════════════════════
 	// Worker
@@ -413,54 +423,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 	const updateConfigAction = useCallback(
 		(partial: Partial<ProcessingConfig>) => {
-			const newConfig = { ...configRef.current, ...partial };
-			configRef.current = newConfig;
-			setConfig(newConfig);
-
-			if (partial.cellSize && explorationLayerRef.current) {
-				explorationLayerRef.current.setCellSize(partial.cellSize);
-				cityManagerRef.current?.terminate();
-				const cityWorker = new Worker(new URL("../worker/city-processor.ts", import.meta.url), {
-					type: "module",
-				});
-				cityWorker.onerror = (error) => {
-					console.error("City worker error:", error);
-				};
-				cityManagerRef.current = new CityManager(
-					visitedCellsRef.current,
-					newConfig.cellSize,
-					tilesBaseUrlRef.current || undefined,
-					cityWorker,
-				);
-				if (allActivitiesRef.current.length > 0) {
-					cityManagerRef.current.discoverCitiesFromActivities(allActivitiesRef.current);
-				}
-			}
-
-			sendWorkerMessage({ type: "updateConfig", data: newConfig });
+			applyConfig(partial);
 		},
-		[sendWorkerMessage],
+		[applyConfig],
 	);
 
 	const updatePrivacySettingsAction = useCallback((settings: PrivacySettings) => {
 		const enabled = settings.enabled;
 		const skipPrivate = settings.skipPrivateActivities;
+		const privacyDistance = enabled ? (settings.removeDistance || 400) : 0;
 
-		const newConfig: ProcessingConfig = {
-			...configRef.current,
-			privacyDistance: enabled ? settings.removeDistance || 400 : 0,
-			snapToGrid: settings.snapToGrid,
-			skipPrivate,
-		};
+		applyConfig({ privacyDistance, skipPrivate });
 
-		configRef.current = newConfig;
-		setConfig(newConfig);
-
-		routeLayerRef.current?.setStyle({
-			showPrivate: !newConfig.skipPrivate,
-		});
-		routeLayerRef.current?.setPrivacyDistance(newConfig.privacyDistance);
-	}, []);
+		routeLayerRef.current?.setStyle({ showPrivate: !skipPrivate });
+		routeLayerRef.current?.setPrivacyDistance(privacyDistance);
+	}, [applyConfig]);
 
 	// ══════════════════════════════════════════════════════════
 	// Auth
@@ -720,7 +697,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// Exploration layer
 			explorationLayerRef.current = createExplorationLayer(map, {
 				id: "exploration-layer",
-				cellSize: configRef.current.cellSize,
 				fillColor: "#4CAF50",
 				fillOpacity: 0.3,
 				borderWidth: 0,
@@ -798,7 +774,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// City manager (pass the Vite-bundled worker)
 			cityManagerRef.current = new CityManager(
 				visitedCellsRef.current,
-				configRef.current.cellSize,
 				tilesBaseUrlRef.current || undefined,
 				cityWorker,
 			);

@@ -1,4 +1,4 @@
-import { latLngToMeters, pointToCell, packCell, unpackCell } from "./projection";
+import { latLngToMeters, pointToCell, packCell, unpackCell, CELL_SIZE } from "./projection";
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import { PMTiles } from "pmtiles";
 import Pbf from "pbf";
@@ -29,9 +29,9 @@ export function setRoadPMTilesURL(url: string) {
 }
 
 interface RoadCellsDB extends DBSchema {
-	// Cache final road cells by tile z/x/y and cellSize (better reuse across cities)
+	// Cache final road cells by tile z/x/y. useful for activities that cross neighboring cities
 	roadTileCells: {
-		key: string; // `${z}/${x}/${y}/${cellSize}`
+		key: string; // `${z}/${x}/${y}`
 		value: {
 			key: string;
 			cells: Int32Array; // interleaved x,y pairs of packed integer cells
@@ -60,8 +60,8 @@ async function getDb(): Promise<IDBPDatabase<RoadCellsDB>> {
 	return db;
 }
 
-function tileKey(z: number, x: number, y: number, cellSize: number): string {
-	return `${z}/${x}/${y}/${cellSize}`;
+function tileKey(z: number, x: number, y: number): string {
+	return `${z}/${x}/${y}`;
 }
 
 // WebMercator helpers for tile math
@@ -101,11 +101,10 @@ async function getCachedTileCells(
 	z: number,
 	x: number,
 	y: number,
-	cellSize: number,
 ): Promise<Set<number> | null> {
 	try {
 		const db = await getDb();
-		const rec = await db.get("roadTileCells", tileKey(z, x, y, cellSize));
+		const rec = await db.get("roadTileCells", tileKey(z, x, y));
 		if (rec) {
 			// Only refresh LRU timestamp if record is more than 1 hour old —
 			// avoids an IDB write on every cache hit during a bulk city computation.
@@ -184,7 +183,6 @@ async function cacheTileCells(
 	z: number,
 	x: number,
 	y: number,
-	cellSize: number,
 	cells: Set<number>,
 ): Promise<void> {
 	try {
@@ -197,7 +195,7 @@ async function cacheTileCells(
 			arr[i++] = cy;
 		}
 		await db.put("roadTileCells", {
-			key: tileKey(z, x, y, cellSize),
+			key: tileKey(z, x, y),
 			cells: arr,
 			timestamp: Date.now(),
 		});
@@ -236,7 +234,6 @@ function rasterizeSegmentInto(
 	lat1: number,
 	lng2: number,
 	lat2: number,
-	cellSize: number,
 	out: Set<number>,
 ): void {
 	const p1 = latLngToMeters(lat1, lng1);
@@ -244,12 +241,12 @@ function rasterizeSegmentInto(
 	const dx = p2.x - p1.x;
 	const dy = p2.y - p1.y;
 	const dist = Math.sqrt(dx * dx + dy * dy);
-	const steps = Math.ceil(dist / (cellSize / 2));
+	const steps = Math.ceil(dist / (CELL_SIZE / 2));
 	for (let s = 0; s <= steps; s++) {
 		const t = steps === 0 ? 0 : s / steps;
 		const x = p1.x + dx * t;
 		const y = p1.y + dy * t;
-		const cell = pointToCell(x, y, cellSize);
+		const cell = pointToCell(x, y);
 		out.add(packCell(cell.x, cell.y));
 	}
 }
@@ -259,7 +256,6 @@ export async function getRoadCellsForBbox(
 	maxLat: number,
 	minLng: number,
 	maxLng: number,
-	cellSize: number,
 	zoom = 14,
 	useCache = true,
 	pmtilesInstance?: PMTiles | null,
@@ -279,7 +275,7 @@ export async function getRoadCellsForBbox(
 	const queue = [...tiles];
 
 	const processTile = async (z: number, x: number, y: number) => {
-		let tileCells = useCache ? await getCachedTileCells(z, x, y, cellSize) : null;
+		let tileCells = useCache ? await getCachedTileCells(z, x, y) : null;
 
 		if (!tileCells) {
 			const bytes = await fetchTileBytes(z, x, y, pmtilesInstance || null);
@@ -299,7 +295,7 @@ export async function getRoadCellsForBbox(
 							for (let i = 0; i < coords.length - 1; i++) {
 								const [lng1, lat1] = coords[i];
 								const [lng2, lat2] = coords[i + 1];
-								rasterizeSegmentInto(lng1, lat1, lng2, lat2, cellSize, cells);
+								rasterizeSegmentInto(lng1, lat1, lng2, lat2, cells);
 							}
 						} else if (gj.geometry.type === "MultiLineString") {
 							const lines = gj.geometry.coordinates as [number, number][][];
@@ -307,7 +303,7 @@ export async function getRoadCellsForBbox(
 								for (let i = 0; i < line.length - 1; i++) {
 									const [lng1, lat1] = line[i];
 									const [lng2, lat2] = line[i + 1];
-									rasterizeSegmentInto(lng1, lat1, lng2, lat2, cellSize, cells);
+									rasterizeSegmentInto(lng1, lat1, lng2, lat2, cells);
 								}
 							}
 						}
@@ -315,7 +311,7 @@ export async function getRoadCellsForBbox(
 				}
 				tileCells = cells;
 				if (useCache) {
-					await cacheTileCells(z, x, y, cellSize, tileCells);
+					await cacheTileCells(z, x, y, tileCells);
 				}
 			} catch (e) {
 				console.warn(`Failed to decode vector tile ${z}/${x}/${y}:`, e);
@@ -348,8 +344,8 @@ export async function getRoadCellsForBbox(
 	let bboxCount = 0;
 	for (const v of union) {
 		const { x: sx, y: sy } = unpackCell(v);
-		const cx = sx * cellSize + cellSize / 2;
-		const cy = sy * cellSize + cellSize / 2;
+		const cx = sx * CELL_SIZE + CELL_SIZE / 2;
+		const cy = sy * CELL_SIZE + CELL_SIZE / 2;
 		if (cx >= minX && cx <= maxX && cy >= minY && cy <= maxY) filtered.add(v);
 		if (++bboxCount % YIELD_INTERVAL === 0) await yieldToEventLoop();
 	}

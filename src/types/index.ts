@@ -59,7 +59,6 @@ export interface Rectangle {
 }
 
 export interface ProcessingConfig {
-	cellSize: number; // meters
 	samplingStep: number; // meters
 	privacyDistance: number; // meters to remove from start/end
 	skipPrivate: boolean;

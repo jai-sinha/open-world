@@ -14,7 +14,6 @@ interface CityRoadCellsDB extends DBSchema {
 		value: {
 			osmId: string;
 			roadCells: Int32Array;
-			cellSize: number;
 			timestamp: number;
 		};
 	};
@@ -38,12 +37,11 @@ async function getRoadCellsDb(): Promise<IDBPDatabase<CityRoadCellsDB>> {
 
 async function getCachedRoadCells(
 	osmId: string,
-	cellSize: number,
 ): Promise<Set<number> | null> {
 	try {
 		const db = await getRoadCellsDb();
 		const record = await db.get("cityRoadCells", osmId);
-		if (record && record.cellSize === cellSize && Date.now() - record.timestamp < ROAD_CELLS_CACHE_MAX_AGE_MS) {
+		if (record && Date.now() - record.timestamp < ROAD_CELLS_CACHE_MAX_AGE_MS) {
 			const cells = new Set<number>();
 			for (let i = 0; i < record.roadCells.length; i += 2) {
 				cells.add(packCell(record.roadCells[i], record.roadCells[i + 1]));
@@ -59,7 +57,6 @@ async function getCachedRoadCells(
 async function cacheRoadCells(
 	osmId: string,
 	roadCells: Set<number>,
-	cellSize: number,
 ): Promise<void> {
 	try {
 		const db = await getRoadCellsDb();
@@ -73,7 +70,6 @@ async function cacheRoadCells(
 		await db.put("cityRoadCells", {
 			osmId,
 			roadCells: pairs,
-			cellSize,
 			timestamp: Date.now(),
 		});
 	} catch (e) {
@@ -110,7 +106,6 @@ export type CityProcessorMessage =
 			payload: {
 				activities: StravaActivity[];
 				visitedCells: number[];
-				cellSize: number;
 				tilesBaseUrl: string;
 			};
 	  }
@@ -122,7 +117,6 @@ export type CityProcessorMessage =
 			type: "CALCULATE_VIEWPORT_STATS";
 			payload: {
 				bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number };
-				cellSize: number;
 			};
 	  };
 
@@ -137,7 +131,6 @@ export type CityProcessorResponse =
 class CityProcessor {
 	private cities = new Map<string, City>();
 	private visitedCells = new Set<number>();
-	private cellSize = 20;
 	private isProcessing = false;
 	private pendingDiscoveryActivities: StravaActivity[] | null = null;
 
@@ -157,7 +150,6 @@ class CityProcessor {
 			case "DISCOVER_CITIES":
 				await this.initTiles(payload.tilesBaseUrl);
 				this.visitedCells = new Set<number>(payload.visitedCells);
-				this.cellSize = payload.cellSize;
 				this.discoverCitiesFromActivities(payload.activities);
 				break;
 			case "UPDATE_VISITED_CELLS":
@@ -165,7 +157,7 @@ class CityProcessor {
 				this.postStats("STATS_UPDATE");
 				break;
 			case "CALCULATE_VIEWPORT_STATS":
-				this.calculateViewportStats(payload.bounds, payload.cellSize);
+				this.calculateViewportStats(payload.bounds);
 				break;
 		}
 	}
@@ -194,7 +186,6 @@ class CityProcessor {
 
 	private async calculateViewportStats(
 		bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
-		cellSize: number,
 	) {
 		try {
 			const centerLat = (bounds.minLat + bounds.maxLat) / 2;
@@ -219,7 +210,7 @@ class CityProcessor {
 
 			const roadCells = await getRoadCellsForBbox(
 				bounds.minLat, bounds.maxLat, bounds.minLng, bounds.maxLng,
-				cellSize, 14, true, pmtiles,
+				14, true, pmtiles,
 			);
 
 			self.postMessage({
@@ -309,7 +300,7 @@ class CityProcessor {
 			// by run_city_dataset.sh / city_road_cells_assigner, clipped to exact
 			// city boundary polygon).
 			let roadCells: Set<number>;
-			const cached = await getCachedRoadCells(cityId, this.cellSize);
+			const cached = await getCachedRoadCells(cityId);
 			if (cached) {
 				roadCells = cached;
 			} else {
@@ -324,7 +315,7 @@ class CityProcessor {
 						for (let i = 0; i < ints.length; i += 2) {
 							roadCells.add(packCell(ints[i], ints[i + 1]));
 						}
-						cacheRoadCells(cityId, roadCells, this.cellSize).catch(console.warn);
+						cacheRoadCells(cityId, roadCells).catch(console.warn);
 					} else {
 						return;
 					}

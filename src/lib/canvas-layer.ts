@@ -3,11 +3,10 @@
 
 import type { CustomLayerInterface, Map as MapLibreMap, CustomRenderMethod } from "maplibre-gl";
 import type { Rectangle } from "../types";
-import { metersToLatLng } from "./projection";
+import { metersToLatLng, CELL_SIZE } from "./projection";
 
 export interface CanvasLayerOptions {
 	id: string;
-	cellSize: number;
 	fillColor?: string;
 	fillOpacity?: number;
 	borderColor?: string;
@@ -20,7 +19,6 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 	renderingMode: "2d" = "2d";
 
 	private rectangles: Rectangle[] = [];
-	private cellSize: number;
 	private fillColor: string;
 	private fillOpacity: number;
 	private borderColor: string;
@@ -29,16 +27,12 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 
 	constructor(options: CanvasLayerOptions) {
 		this.id = options.id;
-		this.cellSize = options.cellSize;
 		this.fillColor = options.fillColor || "#4CAF50";
 		this.fillOpacity = options.fillOpacity ?? 0.3;
 		this.borderColor = options.borderColor || "#2E7D32";
 		this.borderWidth = options.borderWidth ?? 0;
 	}
 
-	/**
-	 * Update rectangles to render
-	 */
 	setRectangles(rectangles: Rectangle[]): void {
 		this.rectangles = rectangles;
 		if (this.map) {
@@ -60,16 +54,6 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 		if (options.borderColor !== undefined) this.borderColor = options.borderColor;
 		if (options.borderWidth !== undefined) this.borderWidth = options.borderWidth;
 
-		if (this.map) {
-			this.map.triggerRepaint();
-		}
-	}
-
-	/**
-	 * Update cell size (requires re-projection of rectangles)
-	 */
-	setCellSize(cellSize: number): void {
-		this.cellSize = cellSize;
 		if (this.map) {
 			this.map.triggerRepaint();
 		}
@@ -129,10 +113,10 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 		if (!this.map) return;
 
 		// Convert cell coordinates to meter coordinates
-		const x1 = rect.minX * this.cellSize;
-		const y1 = rect.minY * this.cellSize;
-		const x2 = (rect.maxX + 1) * this.cellSize;
-		const y2 = (rect.maxY + 1) * this.cellSize;
+		const x1 = rect.minX * CELL_SIZE;
+		const y1 = rect.minY * CELL_SIZE;
+		const x2 = (rect.maxX + 1) * CELL_SIZE;
+		const y2 = (rect.maxY + 1) * CELL_SIZE;
 
 		// Convert meters to lat/lng
 		const sw = metersToLatLng(x1, y1);
@@ -180,7 +164,6 @@ export function createExplorationLayer(
 ): ExplorationCanvasLayer {
 	const layer = new ExplorationCanvasLayer({
 		id: "exploration-layer",
-		cellSize: 50,
 		fillColor: "#4CAF50",
 		fillOpacity: 0.3,
 		...options,

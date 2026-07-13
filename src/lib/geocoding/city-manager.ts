@@ -46,7 +46,6 @@ type CityProcessorResponse =
 export class CityManager {
 	private worker: Worker;
 	private visitedCells: Set<number>;
-	private cellSize: number;
 	private tilesBaseUrl?: string;
 	private latestStats: CityStats[] = [];
 	private discoveryProgress = 0;
@@ -56,9 +55,8 @@ export class CityManager {
 	private discoveryRunId = 0;
 	private activeDiscoveryRunId: number | null = null;
 
-	constructor(visitedCells: Set<number>, cellSize: number, tilesBaseUrl?: string, worker?: Worker) {
+	constructor(visitedCells: Set<number>, tilesBaseUrl?: string, worker?: Worker) {
 		this.visitedCells = visitedCells;
-		this.cellSize = cellSize;
 		this.tilesBaseUrl = tilesBaseUrl;
 
 		// Use provided worker or fall back to hardcoded URL
@@ -152,7 +150,6 @@ export class CityManager {
 				payload: {
 					activities,
 					visitedCells: Array.from(this.visitedCells),
-					cellSize: this.cellSize,
 					tilesBaseUrl: this.tilesBaseUrl,
 				},
 			});
@@ -175,7 +172,6 @@ export class CityManager {
 				type: "CALCULATE_VIEWPORT_STATS",
 				payload: {
 					bounds,
-					cellSize: this.cellSize,
 				},
 			});
 		});
@@ -192,7 +188,18 @@ export class CityManager {
 	public terminate() {
 		this.activeDiscoveryRunId = null;
 		this.onProgressCallback = undefined;
-		this.discoveryPromiseResolve = undefined;
+
+		// resolve pending promises then drop them
+		if (this.discoveryPromiseResolve) {
+			this.discoveryPromiseResolve([])
+			this.discoveryPromiseResolve = undefined;
+		}
+
+		if (this.viewportStatsResolve) {
+			this.viewportStatsResolve(0)
+			this.viewportStatsResolve = undefined;
+		}
+
 		this.worker.terminate();
 	}
 

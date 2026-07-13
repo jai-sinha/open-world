@@ -4,6 +4,10 @@
 const EARTH_RADIUS = 6378137; // meters (WGS84)
 const ORIGIN_SHIFT = Math.PI * EARTH_RADIUS;
 
+// Grid cell size in meters — constant for the lifetime of the application.
+// All grid math derives from this value.
+export const CELL_SIZE = 50;
+
 /**
  * Convert latitude/longitude to Web Mercator meters (EPSG:3857)
  */
@@ -27,10 +31,10 @@ export function metersToLatLng(x: number, y: number): { lat: number; lng: number
 /**
  * Convert point to grid cell coordinates
  */
-export function pointToCell(x: number, y: number, cellSize: number): { x: number; y: number } {
+export function pointToCell(x: number, y: number): { x: number; y: number } {
 	return {
-		x: Math.floor(x / cellSize),
-		y: Math.floor(y / cellSize),
+		x: Math.floor(x / CELL_SIZE),
+		y: Math.floor(y / CELL_SIZE),
 	};
 }
 
@@ -40,18 +44,17 @@ export function pointToCell(x: number, y: number, cellSize: number): { x: number
 export function cellToPoint(
 	cellX: number,
 	cellY: number,
-	cellSize: number,
 ): { x: number; y: number } {
 	return {
-		x: cellX * cellSize + cellSize / 2,
-		y: cellY * cellSize + cellSize / 2,
+		x: cellX * CELL_SIZE + CELL_SIZE / 2,
+		y: cellY * CELL_SIZE + CELL_SIZE / 2,
 	};
 }
 
 // ── Integer cell packing ──────────────────────────────────────────────────────
 // Each cell (x, y) is encoded as a single JS safe-integer number.
 // CELL_OFFSET shifts coordinates to non-negative; CELL_MULTIPLIER separates x/y.
-// Works globally at any cellSize ≥ 1 (max |coord| at cellSize=1 is ~20 M < 2^25).
+// Works globally at CELL_SIZE = 1 (max |coord| at CELL_SIZE=1 is ~20 M < 2^25).
 export const CELL_OFFSET = 33554432; // 2^25
 export const CELL_MULTIPLIER = 67108864; // 2^26
 

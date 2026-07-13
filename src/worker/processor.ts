@@ -22,10 +22,8 @@ let isProcessing = false;
 let pendingReprocess = false;
 
 let currentConfig: ProcessingConfig = {
-	cellSize: 50,
 	samplingStep: 25,
 	privacyDistance: 100,
-	snapToGrid: false,
 	skipPrivate: false,
 };
 
@@ -45,6 +43,12 @@ function processBatch(
 
 		// Skip if already processed
 		if (processedActivityIds.has(activity.id)) continue;
+
+		// Skip private activities when configured
+		if (currentConfig.skipPrivate && activity.private) {
+			processedActivityIds.add(activity.id);
+			continue;
+		}
 
 		// Get polyline
 		const encodedPolyline = activity.map?.summary_polyline || activity.map?.polyline;
@@ -67,7 +71,7 @@ function processBatch(
 
 			// Mark cells
 			for (const point of sampledPoints) {
-				const cell = pointToCell(point.x, point.y, config.cellSize);
+				const cell = pointToCell(point.x, point.y);
 				visitedCells.add(packCell(cell.x, cell.y));
 			}
 
@@ -206,7 +210,7 @@ async function processActivities(data: {
 
 /**
  * Update processing configuration
- * Will trigger an internal reprocess if the change affects coverage (cellSize, samplingStep, privacyDistance, snapToGrid, skipPrivate)
+ * Will trigger an internal reprocess if the change affects coverage (samplingStep, skipPrivate)
  * or if a forceReprocess flag is provided.
  */
 async function reprocessAllActivities(batchSize: number = 20): Promise<void> {
@@ -273,9 +277,8 @@ function updateConfig(config: Partial<ProcessingConfig> & { forceReprocess?: boo
 
 	// Determine whether reprocessing is needed
 	const needsReprocess =
-		config.cellSize !== undefined ||
 		config.samplingStep !== undefined ||
-		config.snapToGrid !== undefined ||
+		config.skipPrivate !== undefined ||
 		force;
 
 	const response: WorkerResponse = {
