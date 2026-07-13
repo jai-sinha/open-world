@@ -84,13 +84,16 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 	};
 
 	/**
-	 * Render rectangles on canvas
+	 * Render rectangles on canvas.
+	 *
+	 * Uses a linear approximation for cell→screen projection:
+	 * projects 3 reference points once, then derives all rectangle
+	 * positions arithmetically — avoids 2× map.project() per rect.
 	 */
 	// @ts-ignore - MapLibre types don't include render method for 2d mode
-	renderCanvas(ctx: CanvasRenderingContext2D, matrix: Parameters<CustomRenderMethod>[1]): void {
+	renderCanvas(ctx: CanvasRenderingContext2D, _matrix: Parameters<CustomRenderMethod>[1]): void {
 		if (!this.map || this.rectangles.length === 0) return;
 
-		// Set fill style
 		const rgb = this.hexToRgb(this.fillColor);
 		ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${this.fillOpacity})`;
 
@@ -100,43 +103,30 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 			ctx.lineWidth = this.borderWidth;
 		}
 
-		// Render each rectangle
+		// Project reference points to derive screen-space cell dimensions.
+		// 3 calls total regardless of rectangle count.
+		const p0 = projectMeters(this.map, 0, 0);
+		const pE = projectMeters(this.map, CELL_SIZE, 0);
+		const pN = projectMeters(this.map, 0, CELL_SIZE);
+
+		const dx = pE.x - p0.x;
+		const dy = p0.y - pN.y;
+
 		for (const rect of this.rectangles) {
-			this.renderRectangle(ctx, rect);
-		}
-	}
+			const cellW = rect.maxX - rect.minX + 1;
+			const cellH = rect.maxY - rect.minY + 1;
+			const x = p0.x + rect.minX * dx;
+			const y = p0.y - rect.minY * dy;
+			const w = cellW * dx;
+			const h = cellH * dy;
 
-	/**
-	 * Render a single rectangle
-	 */
-	private renderRectangle(ctx: CanvasRenderingContext2D, rect: Rectangle): void {
-		if (!this.map) return;
+			if (w < 0.5 || h < 0.5) continue;
 
-		// Convert cell coordinates to meter coordinates
-		const x1 = rect.minX * CELL_SIZE;
-		const y1 = rect.minY * CELL_SIZE;
-		const x2 = (rect.maxX + 1) * CELL_SIZE;
-		const y2 = (rect.maxY + 1) * CELL_SIZE;
+			ctx.fillRect(x, y, w, h);
 
-		// Convert meters to lat/lng
-		const sw = metersToLatLng(x1, y1);
-		const ne = metersToLatLng(x2, y2);
-
-		// Project to screen coordinates
-		const swPoint = this.map.project([sw.lng, sw.lat]);
-		const nePoint = this.map.project([ne.lng, ne.lat]);
-
-		const width = nePoint.x - swPoint.x;
-		const height = swPoint.y - nePoint.y;
-
-		// Skip if too small to see
-		if (width < 0.5 || height < 0.5) return;
-
-		// Draw rectangle
-		ctx.fillRect(swPoint.x, nePoint.y, width, height);
-
-		if (this.borderWidth > 0) {
-			ctx.strokeRect(swPoint.x, nePoint.y, width, height);
+			if (this.borderWidth > 0) {
+				ctx.strokeRect(x, y, w, h);
+			}
 		}
 	}
 
@@ -153,6 +143,14 @@ export class ExplorationCanvasLayer implements CustomLayerInterface {
 				}
 			: { r: 0, g: 0, b: 0 };
 	}
+}
+
+/**
+ * Project Web Mercator meters to screen pixels via a single map.project call.
+ */
+function projectMeters(map: MapLibreMap, x: number, y: number): { x: number; y: number } {
+	const ll = metersToLatLng(x, y);
+	return map.project([ll.lng, ll.lat]);
 }
 
 /**
