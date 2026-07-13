@@ -40,16 +40,15 @@ export default function RouteControls() {
 	const [lineWidth, setLineWidth] = useState(4.5);
 	const [opacity, setOpacity] = useState(0.5);
 
-	// Derive sorted unique activity dates
-	const activityDates = useMemo((): Date[] => {
+	// Derive sorted unique activity date strings (ISO 8601 sorts lexicographically)
+	const activityDateStrings = useMemo((): string[] => {
 		if (allActivities.length === 0) return [];
-		const dates = allActivities
-			.map((a: StravaActivity) => new Date(a.start_date_local))
-			.sort((a: Date, b: Date) => a.getTime() - b.getTime());
-		return dates;
+		const dateStrs = allActivities.map((a: StravaActivity) => a.start_date_local);
+		dateStrs.sort();
+		return dateStrs;
 	}, [allActivities]);
 
-	const maxIndex = Math.max(0, activityDates.length - 1);
+	const maxIndex = Math.max(0, activityDateStrings.length - 1);
 
 	const [fromIndex, setFromIndex] = useState(0);
 	const [toIndex, setToIndex] = useState(maxIndex);
@@ -79,11 +78,12 @@ export default function RouteControls() {
 	// Sync date filter to context
 	const syncDates = useCallback(
 		(from: number, to: number) => {
-			if (activityDates.length === 0) return;
-			setFromDate(startOfDay(activityDates[from]));
-			setToDate(endOfDay(activityDates[to]));
+			if (activityDateStrings.length === 0) return;
+
+			setFromDate(startOfDay(new Date(activityDateStrings[from])));
+			setToDate(endOfDay(new Date(activityDateStrings[to])));
 		},
-		[activityDates, setFromDate, setToDate],
+		[activityDateStrings, setFromDate, setToDate],
 	);
 
 	// Activity type legend
@@ -161,24 +161,21 @@ export default function RouteControls() {
 				</Form.Group>
 
 				{/* Date Range Slider */}
-				{activityDates.length > 0 && (
+				{activityDateStrings.length > 0 && (
 					<Form.Group className="mb-3">
 						<Form.Label className="mb-1">Date Range</Form.Label>
 						<div className="text-muted small mb-2">
-							{formatDate(activityDates[fromIndex])} &ndash; {formatDate(activityDates[toIndex])}
+							{formatDate(new Date(activityDateStrings[fromIndex]))} &ndash; {formatDate(new Date(activityDateStrings[toIndex]))}
 						</div>
 						<DualRangeSlider
 							min={0}
 							max={maxIndex}
 							fromValue={fromIndex}
 							toValue={toIndex}
-							onFromChange={(v) => {
-								setFromIndex(v);
-								syncDates(v, toIndex);
-							}}
-							onToChange={(v) => {
-								setToIndex(v);
-								syncDates(fromIndex, v);
+							onChange={(from, to) => {
+								setFromIndex(from);
+								setToIndex(to);
+								syncDates(from, to);
 							}}
 						/>
 					</Form.Group>
@@ -217,8 +214,7 @@ interface DualRangeSliderProps {
 	max: number;
 	fromValue: number;
 	toValue: number;
-	onFromChange: (v: number) => void;
-	onToChange: (v: number) => void;
+	onChange: (from: number, to: number) => void;
 }
 
 function DualRangeSlider({
@@ -226,16 +222,14 @@ function DualRangeSlider({
 	max,
 	fromValue,
 	toValue,
-	onFromChange,
-	onToChange,
+	onChange,
 }: DualRangeSliderProps) {
 	const handleChange = useCallback(
 		(values: readonly number[]) => {
 			const [nextFrom, nextTo] = values;
-			onFromChange(nextFrom);
-			onToChange(nextTo);
+			onChange(nextFrom, nextTo);
 		},
-		[onFromChange, onToChange],
+		[onChange],
 	);
 
 	return (
