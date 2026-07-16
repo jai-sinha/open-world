@@ -209,7 +209,7 @@ export class StravaClient {
 
 		while (hasMore) {
 			try {
-				const pageActivities = await this.fetchActivitiesPage(page, perPage);
+				const pageActivities = await this.fetchActivitiesPage(page, perPage, 0);
 
 				if (pageActivities.length === 0) {
 					hasMore = false;
@@ -241,7 +241,7 @@ export class StravaClient {
 	/**
 	 * Fetch a single page of activities
 	 */
-	private async fetchActivitiesPage(page: number, perPage: number): Promise<StravaActivity[]> {
+	private async fetchActivitiesPage(page: number, perPage: number, maxDepth: number): Promise<StravaActivity[]> {
 		const params = new URLSearchParams({
 			page: page.toString(),
 			per_page: perPage.toString(),
@@ -257,9 +257,9 @@ export class StravaClient {
 			if (response.status === 401) {
 				// Token expired, try refresh
 				const refreshed = await this.refreshToken();
-				if (refreshed) {
+				if (refreshed && maxDepth < 3) {
 					// Retry with new token
-					return this.fetchActivitiesPage(page, perPage);
+					return this.fetchActivitiesPage(page, perPage, maxDepth++);
 				}
 				throw new Error("Authentication failed");
 			}

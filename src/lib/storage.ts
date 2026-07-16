@@ -2,7 +2,7 @@
 // Enables fast reload without re-processing all activities
 
 import { openDB, type IDBPDatabase } from "idb";
-import type { StoredState, ProcessingConfig } from "../types";
+import type { StoredState, ProcessingConfig, StravaActivity } from "../types";
 
 const DB_NAME = "StravaExplorationMap";
 const DB_VERSION = 2; // bumped: visitedCells now number[] (packed integers)
@@ -43,7 +43,7 @@ export async function saveState(
 	visitedCells: Set<number>,
 	processedActivityIds: Set<number>,
 	config: ProcessingConfig,
-	activities: any[] = [],
+	activities: StravaActivity[] = [],
 ): Promise<void> {
 	try {
 		const db = await getDB();
@@ -70,7 +70,7 @@ export async function loadState(): Promise<{
 	visitedCells: Set<number>;
 	processedActivityIds: Set<number>;
 	config: ProcessingConfig;
-	activities: any[];
+	activities: StravaActivity[];
 	lastSync: number;
 } | null> {
 	try {
