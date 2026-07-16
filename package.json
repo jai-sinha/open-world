@@ -1,6 +1,6 @@
 {
 	"name": "open-world-strava",
-	"version": "1.0.0",
+	"version": "2.0.0",
 	"description": "Client-side MapLibre exploration map for Strava activities",
 	"type": "module",
 	"homepage": "openworld.jsinha.com",
