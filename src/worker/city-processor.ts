@@ -255,9 +255,11 @@ class CityProcessor {
 			const BATCH_SIZE = 10;
 			for (let i = 0; i < uniqueLocations.length; i += BATCH_SIZE) {
 				const batch = uniqueLocations.slice(i, i + BATCH_SIZE);
+				const citiesBefore = this.cities.size;
 				await Promise.all(batch.map(([lat, lng]) => this.identifyCity(lat, lng)));
 				this.locationProcessed = Math.min(i + BATCH_SIZE, uniqueLocations.length);
 				this.postProgress();
+				if (this.cities.size > citiesBefore) this.postStats("STATS_UPDATE");
 			}
 
 			this.postStats("COMPLETE");
@@ -350,7 +352,6 @@ class CityProcessor {
 			this.roadCellTotal++;
 			this.roadCellProcessed++;
 			this.postProgress();
-			this.postStats("STATS_UPDATE");
 		} catch (e) {
 			console.warn("City identification failed:", e);
 		}
