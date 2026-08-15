@@ -15,13 +15,14 @@ import type {
 	WorkerMessage,
 	WorkerResponse,
 	PrivacySettings,
+	CityStats,
+	CityProcessorResponse,
 } from "@/types";
 import { createStravaClient, StravaClient } from "@/lib/strava";
 import { saveState, clearState } from "@/lib/storage";
 import { createExplorationLayer, ExplorationCanvasLayer } from "@/lib/canvas-layer";
 import { CELL_SIZE } from "@/lib/projection";
 import { createRouteOverlay, RouteOverlayLayer, type RouteClickFeature } from "@/lib/route-layer";
-import { CityManager, type CityStats } from "@/lib/geocoding/city-manager";
 import { setRoadPMTilesURL } from "@/lib/tiles";
 import {
 	getLatestActivityCenter,
@@ -156,7 +157,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const workerRef = useRef<Worker | null>(null);
 	const explorationLayerRef = useRef<ExplorationCanvasLayer | null>(null);
 	const routeLayerRef = useRef<RouteOverlayLayer | null>(null);
-	const cityManagerRef = useRef<CityManager | null>(null);
+	const cityWorkerRef = useRef<Worker | null>(null);
 	const visitedCellsRef = useRef<Set<number>>(new Set());
 	const processedActivityIdsRef = useRef<Set<number>>(new Set());
 	const configRef = useRef<ProcessingConfig>(DEFAULT_CONFIG);
@@ -169,6 +170,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const initializedRef = useRef(false);
 	const stravaClientIdRef = useRef<string>("");
 	const handleWorkerMessageRef = useRef<(response: WorkerResponse) => void>(() => {});
+	const handleCityWorkerMessageRef = useRef<(response: CityProcessorResponse) => void>(() => {});
+	const viewportStatsResolveRef = useRef<((pct: number) => void) | null>(null);
 
 	const CITY_OUTLINE_SOURCE_ID = "city-outline-highlight";
 	const CITY_OUTLINE_LAYER_ID = "city-outline-highlight-layer";
@@ -193,31 +196,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 	const calculateViewportStats = useCallback(async (): Promise<number> => {
 		const map = mapRef.current;
-		const cm = cityManagerRef.current;
-		if (!map || !cm) return 0;
+		const worker = cityWorkerRef.current;
+		if (!map || !worker) return 0;
 		if (map.getZoom() < 11) return -1;
 
 		const bounds = map.getBounds();
 		const ne = bounds.getNorthEast();
 		const sw = bounds.getSouthWest();
 
-		// Race the city-worker call against a timeout so a broken worker
-		// doesn't hang updateStatsUI (and therefore setStats) forever.
 		const VIEWPORT_STATS_TIMEOUT_MS = 10000;
 		try {
+			if (viewportStatsResolveRef.current) {
+				viewportStatsResolveRef.current(0);
+				viewportStatsResolveRef.current = null;
+			}
 			return await Promise.race([
-				cm.calculateViewportStats({
-					minLat: sw.lat,
-					maxLat: ne.lat,
-					minLng: sw.lng,
-					maxLng: ne.lng,
+				new Promise<number>((resolve) => {
+					viewportStatsResolveRef.current = resolve;
+					worker.postMessage({
+						type: "CALCULATE_VIEWPORT_STATS",
+						payload: {
+							bounds: { minLat: sw.lat, maxLat: ne.lat, minLng: sw.lng, maxLng: ne.lng },
+						},
+					});
 				}),
 				new Promise<number>((_, reject) =>
 					setTimeout(() => reject(new Error("viewport stats timeout")), VIEWPORT_STATS_TIMEOUT_MS),
 				),
 			]);
 		} catch {
-			// City worker unresponsive – return 0 so the rest of the stats still render
 			return 0;
 		}
 	}, []);
@@ -286,7 +293,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		(data: any) => {
 			if (data.visitedCells) {
 				visitedCellsRef.current = new Set<number>(data.visitedCells);
-				cityManagerRef.current?.updateVisitedCells(visitedCellsRef.current);
+				cityWorkerRef.current?.postMessage({
+					type: "UPDATE_VISITED_CELLS",
+					payload: { visitedCells: Array.from(visitedCellsRef.current) },
+				});
 			}
 			if (data.processedActivityIds) {
 				processedActivityIdsRef.current = new Set(data.processedActivityIds);
@@ -364,6 +374,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		handleWorkerMessageRef.current = handleWorkerMessage;
 	}, [handleWorkerMessage]);
 
+	const handleCityWorkerMessage = useCallback((response: CityProcessorResponse) => {
+		switch (response.type) {
+			case "PROGRESS":
+				setCityDiscoveryProgress(response.payload.percentage);
+				break;
+			case "STATS_UPDATE":
+				setCityStats(response.payload.stats);
+				break;
+			case "COMPLETE":
+				setCityDiscoveryProgress(100);
+				setCityStats(response.payload.stats);
+				break;
+			case "VIEWPORT_STATS":
+				viewportStatsResolveRef.current?.(response.payload.percentage);
+				viewportStatsResolveRef.current = null;
+				break;
+			case "ERROR":
+				console.error("City worker error:", response.payload.message);
+				break;
+		}
+	}, []);
+
+	useEffect(() => {
+		handleCityWorkerMessageRef.current = handleCityWorkerMessage;
+	}, [handleCityWorkerMessage]);
+
 	// ══════════════════════════════════════════════════════════
 	// Data Processing
 	// ══════════════════════════════════════════════════════════
@@ -393,7 +429,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				console.warn("No activity with valid location data found — skipping jumpTo");
 			}
 
-			cityManagerRef.current?.discoverCitiesFromActivities(activities);
+			setCityDiscoveryProgress(0);
+			cityWorkerRef.current?.postMessage({
+				type: "DISCOVER_CITIES",
+				payload: {
+					activities,
+					visitedCells: Array.from(visitedCellsRef.current),
+					tilesBaseUrl: tilesBaseUrlRef.current,
+				},
+			});
 
 			// Sync worker with full list
 			sendWorkerMessage({ type: "init", data: { activities } });
@@ -767,16 +811,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			const cityWorker = new Worker(new URL("../worker/city-processor.ts", import.meta.url), {
 				type: "module",
 			});
+			cityWorkerRef.current = cityWorker;
 			cityWorker.onerror = (error) => {
 				console.error("City worker error:", error);
 			};
-
-			// City manager (pass the Vite-bundled worker)
-			cityManagerRef.current = new CityManager(
-				visitedCellsRef.current,
-				tilesBaseUrlRef.current || undefined,
-				cityWorker,
-			);
+			cityWorker.onmessage = (event) => handleCityWorkerMessageRef.current(event.data);
 
 			if (hydratedState) {
 				sendWorkerMessage({
@@ -789,9 +828,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 					},
 				});
 
-				cityManagerRef.current?.updateVisitedCells(visitedCellsRef.current);
+				cityWorkerRef.current?.postMessage({
+					type: "UPDATE_VISITED_CELLS",
+					payload: { visitedCells: Array.from(visitedCellsRef.current) },
+				});
 				if (hydratedState.activities.length > 0) {
-					cityManagerRef.current?.discoverCitiesFromActivities(hydratedState.activities);
+					setCityDiscoveryProgress(0);
+					cityWorkerRef.current?.postMessage({
+						type: "DISCOVER_CITIES",
+						payload: {
+							activities: hydratedState.activities,
+							visitedCells: Array.from(visitedCellsRef.current),
+							tilesBaseUrl: tilesBaseUrlRef.current,
+						},
+					});
 				}
 
 				if (explorationLayerRef.current) {
@@ -825,47 +875,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Side Effects
 	// ══════════════════════════════════════════════════════════
 
-	// City discovery events (window custom events)
-	useEffect(() => {
-		const onStart = () => {
-			setCityDiscoveryProgress(0);
-		};
-
-		const onProgress = (e: Event) => {
-			const detail = (e as CustomEvent).detail;
-			if (detail?.percentage !== undefined) {
-				setCityDiscoveryProgress(detail.percentage);
-			}
-		};
-
-		const onComplete = (e: Event) => {
-			const detail = (e as CustomEvent).detail;
-			setCityDiscoveryProgress(100);
-			if (detail?.stats) {
-				setCityStats(detail.stats);
-			}
-		};
-
-		const onStatsUpdate = (e: Event) => {
-			const detail = (e as CustomEvent).detail;
-			if (detail?.stats) {
-				setCityStats(detail.stats);
-			}
-		};
-
-		window.addEventListener("city-discovery-start", onStart);
-		window.addEventListener("city-discovery-progress", onProgress);
-		window.addEventListener("city-discovery-complete", onComplete);
-		window.addEventListener("city-stats-update", onStatsUpdate);
-
-		return () => {
-			window.removeEventListener("city-discovery-start", onStart);
-			window.removeEventListener("city-discovery-progress", onProgress);
-			window.removeEventListener("city-discovery-complete", onComplete);
-			window.removeEventListener("city-stats-update", onStatsUpdate);
-		};
-	}, []);
-
 	// Cleanup on unmount
 	useEffect(() => {
 		return () => {
@@ -892,9 +901,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			workerRef.current?.terminate();
 			workerRef.current = null;
 
-			// City manager
-			cityManagerRef.current?.terminate();
-			cityManagerRef.current = null;
+			// City worker
+			cityWorkerRef.current?.terminate();
+			cityWorkerRef.current = null;
 
 			// Outline animation
 			if (cityOutlineAnimationFrameRef.current) {

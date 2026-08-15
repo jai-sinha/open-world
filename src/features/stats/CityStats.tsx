@@ -1,6 +1,6 @@
 import { Card, ProgressBar } from "react-bootstrap";
 import { useApp } from "@/app/AppContext";
-import type { CityStats as CityStatsItem } from "@/lib/geocoding/city-manager";
+import type { CityStats as CityStatsItem } from "@/types";
 
 export default function CityStats() {
 	const { cityStats, cityDiscoveryProgress, jumpToCity } = useApp();

@@ -143,3 +143,36 @@ export interface LatLng {
 	lat: number;
 	lng: number;
 }
+
+export interface City {
+	id: string;
+	osmId: string;
+	name: string;
+	displayName: string;
+	outline: [number, number][][];
+	roadCells: Set<number> | null;
+	roadTiles: string;
+	center?: { lat: number; lng: number };
+}
+
+export interface CityStats {
+	cityId: string;
+	displayName: string;
+	totalCells: number;
+	visitedCount: number;
+	percentage: number;
+	center?: { lat: number; lng: number };
+	outline?: [number, number][][];
+}
+
+export type CityProcessorMessage =
+	| { type: "DISCOVER_CITIES"; payload: { activities: StravaActivity[]; visitedCells: number[]; tilesBaseUrl: string } }
+	| { type: "UPDATE_VISITED_CELLS"; payload: { visitedCells: number[] } }
+	| { type: "CALCULATE_VIEWPORT_STATS"; payload: { bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number } } };
+
+export type CityProcessorResponse =
+	| { type: "PROGRESS"; payload: { percentage: number } }
+	| { type: "COMPLETE"; payload: { stats: CityStats[] } }
+	| { type: "STATS_UPDATE"; payload: { stats: CityStats[] } }
+	| { type: "VIEWPORT_STATS"; payload: { percentage: number } }
+	| { type: "ERROR"; payload: { message: string } };

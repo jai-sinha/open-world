@@ -1,4 +1,4 @@
-import type { City, CityStats } from "./geocoding/city-manager";
+import type { City, CityStats } from "../types";
 import { CELL_NEIGHBOR_OFFSETS } from "./projection";
 
 // ============ Core visited cell metrics ============
