@@ -72,17 +72,52 @@ export interface ProcessingState {
 	lastUpdate: number;
 }
 
-export interface WorkerMessage {
-	type: "init" | "process" | "clear" | "updateConfig";
-	data?: any;
+export interface ProgressPayload {
+	cellCount?: number;
+	initialized?: boolean;
+	storedActivities?: number;
+	configUpdated?: true;
+	needsReprocess?: boolean;
+	config?: ProcessingConfig;
+	message?: string;
+	noActivities?: boolean;
+	queued?: boolean;
 }
 
-export interface WorkerResponse {
-	type: "progress" | "complete" | "error" | "rectangles" | "cells";
-	data?: any;
-	progress?: number;
-	total?: number;
+export interface RectanglesPayload {
+	rectangles: Rectangle[];
+	cellsAdded: number;
+	totalCells: number;
+	visitedCells: number[];
+	processedActivityIds: number[];
+	reprocessing?: boolean;
 }
+
+export interface CompletePayload {
+	rectangles?: Rectangle[];
+	totalCells?: number;
+	visitedCells?: number[];
+	processedActivityIds?: number[];
+	cleared?: boolean;
+	reprocessed?: boolean;
+}
+
+export interface ErrorPayload {
+	message: string;
+	error?: unknown;
+}
+
+export type WorkerMessage =
+	| { type: "init"; data: { visitedCells?: number[]; processedActivityIds?: number[]; config?: ProcessingConfig; activities?: StravaActivity[] } }
+	| { type: "process"; data: { activities: StravaActivity[]; batchSize?: number } }
+	| { type: "updateConfig"; data: Partial<ProcessingConfig> & { forceReprocess?: boolean } }
+	| { type: "clear" };
+
+export type WorkerResponse =
+	| { type: "progress"; progress?: number; total?: number; data: ProgressPayload }
+	| { type: "rectangles"; progress?: number; total?: number; data: RectanglesPayload }
+	| { type: "complete"; progress?: number; total?: number; data?: CompletePayload }
+	| { type: "error"; progress?: number; total?: number; data?: ErrorPayload };
 
 export interface BatchProcessRequest {
 	activities: StravaActivity[];

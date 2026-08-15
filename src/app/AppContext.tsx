@@ -14,6 +14,8 @@ import type {
 	ProcessingConfig,
 	WorkerMessage,
 	WorkerResponse,
+	RectanglesPayload,
+	CompletePayload,
 	PrivacySettings,
 	CityStats,
 	CityProcessorResponse,
@@ -289,7 +291,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const updateMapAndState = useCallback(
-		(data: any) => {
+		(data: RectanglesPayload | CompletePayload) => {
 			if (data.visitedCells) {
 				visitedCellsRef.current = new Set<number>(data.visitedCells);
 				cityWorkerRef.current?.postMessage({
@@ -311,17 +313,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 	const handleWorkerMessage = useCallback(
 		(response: WorkerResponse) => {
-			const { type, data, progress: prog, total } = response;
-
-			switch (type) {
+			switch (response.type) {
 				case "progress":
-					if (prog !== undefined && total !== undefined) {
-						setProgress({ current: prog, total, message: data?.message });
+					if (response.progress !== undefined && response.total !== undefined) {
+						setProgress({
+							current: response.progress,
+							total: response.total,
+							message: response.data.message,
+						});
 					}
 
-					// Handle config updates requiring reprocessing
-					if (data?.configUpdated && data?.needsReprocess) {
-						if (data.noActivities) {
+					if (response.data.configUpdated && response.data.needsReprocess) {
+						if (response.data.noActivities) {
 							if (allActivitiesRef.current.length > 0) {
 								sendWorkerMessage({
 									type: "init",
@@ -332,29 +335,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 									data: configRef.current,
 								});
 							}
-						} else if (!data.queued) {
+						} else if (!response.data.queued) {
 							setIsProcessing(true);
 						}
 					}
 					break;
 
 				case "rectangles":
-					if (data) {
-						if (data.reprocessing) {
-							setIsProcessing(true);
-						}
-						updateMapAndState(data);
-						if (prog !== undefined && total !== undefined) {
-							setProgress({ current: prog, total });
-						}
-						saveStatePeriodically();
+					if (response.data.reprocessing) {
+						setIsProcessing(true);
 					}
+					updateMapAndState(response.data);
+					if (response.progress !== undefined && response.total !== undefined) {
+						setProgress({ current: response.progress, total: response.total });
+					}
+					saveStatePeriodically();
 					break;
 
 				case "complete":
 					setIsProcessing(false);
 					setProgress(null);
-					if (data) updateMapAndState(data);
+					if (response.data) updateMapAndState(response.data);
 					saveCurrentState();
 					break;
 

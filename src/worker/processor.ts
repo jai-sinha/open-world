@@ -355,28 +355,25 @@ function clear(): void {
 
 // Message handler
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
-	const { type, data } = event.data;
+	const msg = event.data;
 
 	try {
-		switch (type) {
+		switch (msg.type) {
 			case "init":
-				initialize(data);
+				initialize(msg.data);
 				break;
 
 			case "process":
-				await processActivities(data);
+				await processActivities(msg.data);
 				break;
 
 			case "updateConfig":
-				updateConfig(data);
+				updateConfig(msg.data);
 				break;
 
 			case "clear":
 				clear();
 				break;
-
-			default:
-				console.warn("Unknown message type:", type);
 		}
 	} catch (error) {
 		const response: WorkerResponse = {
