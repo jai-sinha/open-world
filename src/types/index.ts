@@ -126,9 +126,14 @@ export interface AppConfig {
 
 export interface StoredState {
 	version: number;
-	visitedCells: number[]; // packed integer cells (see packCell in projection.ts)
+	visitedCells: number[];
 	processedActivityIds: number[];
 	config: ProcessingConfig;
+	lastSync: number;
+}
+
+export interface CachedActivities {
+	version: number;
 	activities: StravaActivity[];
 	lastSync: number;
 }

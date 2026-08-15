@@ -19,7 +19,7 @@ import type {
 	CityProcessorResponse,
 } from "@/types";
 import { createStravaClient, StravaClient } from "@/lib/strava";
-import { saveState, clearState } from "@/lib/storage";
+import { saveState, saveActivities, clearState } from "@/lib/storage";
 import { createExplorationLayer, ExplorationCanvasLayer } from "@/lib/canvas-layer";
 import { CELL_SIZE } from "@/lib/projection";
 import { createRouteOverlay, RouteOverlayLayer, type RouteClickFeature } from "@/lib/route-layer";
@@ -258,7 +258,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				visitedCellsRef.current,
 				processedActivityIdsRef.current,
 				configRef.current,
-				allActivitiesRef.current,
 			);
 		} catch (error) {
 			console.error("Failed to save state:", error);
@@ -418,6 +417,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 			allActivitiesRef.current = activities;
 			setAllActivities(activities);
+			saveActivities(activities);
 
 			routeLayerRef.current?.setActivities(activities);
 
