@@ -50,7 +50,6 @@ export const ACTIVITY_COLORS: Record<string, string> = {
 	Walk: "#43A047",
 	Hike: "#FB8C00",
 	Swim: "#00ACC1",
-	AlpineSki: "#00897B",
 	default: "#fc5200",
 };
 
@@ -62,6 +61,7 @@ export class RouteOverlayLayer {
 	private options: InternalRouteLayerOptions;
 	private tooltip: HTMLDivElement | null = null;
 	private currentFeatureIds: string = "";
+	private hoveredFeatureIds: Set<string | number> = new Set();
 
 	constructor(map: MapLibreMap, options: RouteLayerOptions = {}) {
 		this.map = map;
@@ -106,6 +106,7 @@ export class RouteOverlayLayer {
 
 		this.map.addSource(this.sourceId, {
 			type: "geojson",
+			generateId: true,
 			data: { type: "FeatureCollection", features: [] },
 		});
 
@@ -114,7 +115,12 @@ export class RouteOverlayLayer {
 			type: "line",
 			source: this.sourceId,
 			paint: {
-				"line-color": ["get", "color"],
+				"line-color": [
+					"case",
+					["boolean", ["feature-state", "hover"], false],
+					"#a000a6",
+					["get", "color"],
+				],
 				"line-width": this.options.lineWidth,
 				"line-opacity": this.options.lineOpacity,
 			},
@@ -158,6 +164,28 @@ export class RouteOverlayLayer {
 		// Only update content if the set of features changed
 		if (featureIds !== this.currentFeatureIds) {
 			this.currentFeatureIds = featureIds;
+
+			// Clear previous hover states
+			for (const id of this.hoveredFeatureIds) {
+				this.map.setFeatureState(
+					{ source: this.sourceId, id },
+					{ hover: false },
+				);
+			}
+			this.hoveredFeatureIds.clear();
+
+			// Set hover state on new features
+			for (const f of features) {
+				const id = f.id;
+				if (id !== undefined) {
+					this.map.setFeatureState(
+						{ source: this.sourceId, id },
+						{ hover: true },
+					);
+					this.hoveredFeatureIds.add(id);
+				}
+			}
+
 			// escape the activity name + type to prevent html xss
 			const escape = (s: string) =>
 				s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -185,6 +213,13 @@ export class RouteOverlayLayer {
 	private onMouseLeave = (): void => {
 		this.map.getCanvas().style.cursor = "";
 		this.currentFeatureIds = "";
+		for (const id of this.hoveredFeatureIds) {
+			this.map.setFeatureState(
+				{ source: this.sourceId, id },
+				{ hover: false },
+			);
+		}
+		this.hoveredFeatureIds.clear();
 		if (this.tooltip) {
 			this.tooltip.style.display = "none";
 		}
