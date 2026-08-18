@@ -1,10 +1,11 @@
 import { openDB, type IDBPDatabase } from "idb";
-import type { StoredState, ProcessingConfig, StravaActivity, CachedActivities } from "../types";
+import type { StoredState, ProcessingConfig, StravaActivity, CachedActivities, City } from "../types";
 
 const DB_NAME = "StravaExplorationMap";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const EXPLORATION_STORE = "explorationState";
 const ACTIVITIES_STORE = "cachedActivities";
+const CITIES_STORE = "savedCities";
 
 interface ExplorationDB {
 	explorationState: {
@@ -15,6 +16,21 @@ interface ExplorationDB {
 		key: string;
 		value: CachedActivities;
 	};
+	savedCities: {
+		key: string;
+		value: { cities: SavedCity[]; stats: import("../types").CityStats[]; lastSync: number };
+	};
+}
+
+export interface SavedCity {
+	id: string;
+	osmId: string;
+	name: string;
+	displayName: string;
+	outline: [number, number][][];
+	roadCells: number[] | null;
+	roadTiles: string;
+	center?: { lat: number; lng: number };
 }
 
 let dbPromise: Promise<IDBPDatabase< ExplorationDB>> | null = null;
@@ -23,15 +39,20 @@ async function getDB(): Promise<IDBPDatabase< ExplorationDB>> {
 	if (!dbPromise) {
 		dbPromise = openDB< ExplorationDB>(DB_NAME, DB_VERSION, {
 			upgrade(db, _oldVersion, _newVersion, transaction) {
-				if (db.objectStoreNames.contains(EXPLORATION_STORE)) {
-					transaction.objectStore(EXPLORATION_STORE).clear();
-				} else {
+				if (_oldVersion < 4) {
+					for (const name of db.objectStoreNames) {
+						transaction.objectStore(name).clear();
+					}
+				}
+
+				if (!db.objectStoreNames.contains(EXPLORATION_STORE)) {
 					db.createObjectStore(EXPLORATION_STORE);
 				}
-				if (db.objectStoreNames.contains(ACTIVITIES_STORE)) {
-					transaction.objectStore(ACTIVITIES_STORE).clear();
-				} else {
+				if (!db.objectStoreNames.contains(ACTIVITIES_STORE)) {
 					db.createObjectStore(ACTIVITIES_STORE);
+				}
+				if (!db.objectStoreNames.contains(CITIES_STORE)) {
+					db.createObjectStore(CITIES_STORE);
 				}
 			},
 		});
@@ -123,6 +144,7 @@ export async function clearState(): Promise<void> {
 		const db = await getDB();
 		await db.delete(EXPLORATION_STORE, "current");
 		await db.delete(ACTIVITIES_STORE, "current");
+		await db.delete(CITIES_STORE, "current");
 	} catch (error) {
 		console.error("Failed to clear state from IndexedDB:", error);
 		throw error;
@@ -145,4 +167,64 @@ export async function clearState(): Promise<void> {
 		localStorage.removeItem("strava_expires_at");
 		localStorage.removeItem("strava_athlete");
 	} catch { /* ignore */ }
+}
+
+function serializeCity(city: City): SavedCity {
+	return {
+		id: city.id,
+		osmId: city.osmId,
+		name: city.name,
+		displayName: city.displayName,
+		outline: city.outline,
+		roadCells: city.roadCells ? Array.from(city.roadCells) : null,
+		roadTiles: city.roadTiles,
+		center: city.center,
+	};
+}
+
+function deserializeCity(saved: SavedCity): City {
+	return {
+		id: saved.id,
+		osmId: saved.osmId,
+		name: saved.name,
+		displayName: saved.displayName,
+		outline: saved.outline,
+		roadCells: saved.roadCells ? new Set(saved.roadCells) : null,
+		roadTiles: saved.roadTiles,
+		center: saved.center,
+	};
+}
+
+export async function saveCities(
+	cities: City[],
+	cityStats: import("../types").CityStats[],
+): Promise<void> {
+	try {
+		const db = await getDB();
+		await db.put(CITIES_STORE, {
+			cities: Array.from(cities).map(serializeCity),
+			stats: cityStats,
+			lastSync: Date.now(),
+		}, "current");
+	} catch (error) {
+		console.error("Failed to save cities:", error);
+	}
+}
+
+export async function loadCities(): Promise<{
+	cities: City[];
+	cityStats: import("../types").CityStats[];
+} | null> {
+	try {
+		const db = await getDB();
+		const record = await db.get(CITIES_STORE, "current");
+		if (!record) return null;
+		return {
+			cities: record.cities.map(deserializeCity),
+			cityStats: record.stats,
+		};
+	} catch (error) {
+		console.error("Failed to load cities:", error);
+		return null;
+	}
 }

@@ -18,10 +18,11 @@ import type {
 	CompletePayload,
 	PrivacySettings,
 	CityStats,
+	City,
 	CityProcessorResponse,
 } from "@/types";
 import { createStravaClient, StravaClient } from "@/lib/strava";
-import { saveState, saveActivities, clearState } from "@/lib/storage";
+import { saveState, saveActivities, saveCities, clearState } from "@/lib/storage";
 import { createExplorationLayer, ExplorationCanvasLayer } from "@/lib/canvas-layer";
 import { CELL_SIZE } from "@/lib/projection";
 import { createRouteOverlay, RouteOverlayLayer, type RouteClickFeature } from "@/lib/route-layer";
@@ -168,6 +169,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const statsDebounceTimerRef = useRef<number | undefined>(undefined);
 	const cityOutlineAnimationFrameRef = useRef<number | undefined>(undefined);
 	const allActivitiesRef = useRef<StravaActivity[]>([]);
+	const citiesRef = useRef<City[]>([]);
 	const isProcessingRef = useRef(false);
 	const initializedRef = useRef(false);
 	const stravaClientIdRef = useRef<string>("");
@@ -385,6 +387,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			case "COMPLETE":
 				setCityDiscoveryProgress(100);
 				setCityStats(response.payload.stats);
+				if (response.payload.cities) {
+					citiesRef.current = response.payload.cities;
+					saveCities(response.payload.cities, response.payload.stats);
+				}
 				break;
 			case "VIEWPORT_STATS":
 				viewportStatsResolveRef.current?.(response.payload.percentage);
@@ -563,12 +569,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			const code = params.get("code");
 			const error = params.get("error");
 
-			console.debug("Strava auth initialize", {
-				hasCode: !!code,
-				error,
-				pathname: window.location.pathname,
-			});
-
 			if (code || error) {
 				await handleAuthCallbackInner();
 			} else {
@@ -736,6 +736,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				processedActivityIdsRef.current = new Set(hydratedState.processedActivityIds);
 				allActivitiesRef.current = hydratedState.activities;
 				setAllActivities(hydratedState.activities);
+
+				if (hydratedState.cities.length > 0) {
+					citiesRef.current = hydratedState.cities;
+					setCityStats(hydratedState.cityStats);
+				}
 			}
 
 			// Exploration layer
@@ -830,9 +835,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 				cityWorkerRef.current?.postMessage({
 					type: "UPDATE_VISITED_CELLS",
-					payload: { visitedCells: Array.from(visitedCellsRef.current) },
+					payload: {
+						visitedCells: Array.from(visitedCellsRef.current),
+						...(citiesRef.current.length > 0 && {
+							cities: citiesRef.current,
+							tilesBaseUrl: tilesBaseUrlRef.current,
+						}),
+					},
 				});
-				if (hydratedState.activities.length > 0) {
+				if (hydratedState.activities.length > 0 && citiesRef.current.length === 0) {
 					setCityDiscoveryProgress(0);
 					cityWorkerRef.current?.postMessage({
 						type: "DISCOVER_CITIES",

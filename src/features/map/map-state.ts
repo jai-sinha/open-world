@@ -1,5 +1,5 @@
-import type { ProcessingConfig, StravaActivity } from "@/types";
-import { loadState } from "@/lib/storage";
+import type { ProcessingConfig, StravaActivity, City, CityStats } from "@/types";
+import { loadState, loadCities } from "@/lib/storage";
 
 export interface MapViewState {
 	center: [number, number];
@@ -12,6 +12,8 @@ export interface HydratedMapState {
 	config: ProcessingConfig | null;
 	visitedCells: number[];
 	processedActivityIds: number[];
+	cities: City[];
+	cityStats: CityStats[];
 }
 
 export function getLatestActivityCenter(activities: StravaActivity[]): MapViewState | null {
@@ -43,7 +45,7 @@ export function getLatestActivityCenter(activities: StravaActivity[]): MapViewSt
 
 export async function hydrateMapState(): Promise<HydratedMapState> {
 	try {
-		const state = await loadState();
+		const [state, citiesData] = await Promise.all([loadState(), loadCities()]);
 
 		return {
 			initialView: state ? getLatestActivityCenter(state.activities) : null,
@@ -51,6 +53,8 @@ export async function hydrateMapState(): Promise<HydratedMapState> {
 			config: state?.config ?? null,
 			visitedCells: state ? Array.from(state.visitedCells) : [],
 			processedActivityIds: state ? Array.from(state.processedActivityIds) : [],
+			cities: citiesData?.cities ?? [],
+			cityStats: citiesData?.cityStats ?? [],
 		};
 	} catch (error) {
 		console.error("Failed to load initial map state:", error);
@@ -61,6 +65,8 @@ export async function hydrateMapState(): Promise<HydratedMapState> {
 			config: null,
 			visitedCells: [],
 			processedActivityIds: [],
+			cities: [],
+			cityStats: [],
 		};
 	}
 }

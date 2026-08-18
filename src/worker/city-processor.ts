@@ -105,6 +105,12 @@ class CityProcessor {
 				break;
 			case "UPDATE_VISITED_CELLS":
 				this.visitedCells = new Set<number>(payload.visitedCells);
+				if (payload.cities && payload.tilesBaseUrl) {
+					await this.initTiles(payload.tilesBaseUrl);
+					for (const city of payload.cities) {
+						this.cities.set(city.id, city);
+					}
+				}
 				this.postStats("STATS_UPDATE");
 				break;
 			case "CALCULATE_VIEWPORT_STATS":
@@ -324,7 +330,10 @@ class CityProcessor {
 	private postStats(type: "COMPLETE" | "STATS_UPDATE") {
 		self.postMessage({
 			type,
-			payload: { stats: computeCityStats(this.cities.values(), this.visitedCells) },
+			payload: {
+				stats: computeCityStats(this.cities.values(), this.visitedCells),
+				...(type === "COMPLETE" && { cities: Array.from(this.cities.values()) }),
+			},
 		});
 	}
 }
