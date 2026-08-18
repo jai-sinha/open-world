@@ -127,4 +127,22 @@ export async function clearState(): Promise<void> {
 		console.error("Failed to clear state from IndexedDB:", error);
 		throw error;
 	}
+
+	try {
+		const dbs = await indexedDB.databases();
+		for (const db of dbs) {
+			if (db.name) {
+				try { indexedDB.deleteDatabase(db.name); } catch { /* ignore */ }
+			}
+		}
+	} catch (error) {
+		console.error("Failed to delete IndexedDB databases:", error);
+	}
+
+	try {
+		localStorage.removeItem("strava_access_token");
+		localStorage.removeItem("strava_refresh_token");
+		localStorage.removeItem("strava_expires_at");
+		localStorage.removeItem("strava_athlete");
+	} catch { /* ignore */ }
 }

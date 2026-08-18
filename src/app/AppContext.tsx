@@ -526,7 +526,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 					const success = await stravaClientRef.current.handleCallback(code);
 					if (success) {
 						updateAuthUI();
-						fetchAndProcessInner();
 					} else {
 						updateAuthUI();
 					}
@@ -539,7 +538,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		}
 
 		updateAuthUI();
-	}, [updateAuthUI, fetchAndProcessInner]);
+	}, [updateAuthUI]);
 
 	const initialize = useCallback(async () => {
 		if (initializedRef.current) return;
