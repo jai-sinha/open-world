@@ -84,6 +84,7 @@ class CityProcessor {
 	private visitedCells = new Set<number>();
 	private isProcessing = false;
 	private pendingDiscoveryActivities: StravaActivity[] | null = null;
+	private pendingComplete = false;
 
 	private locationTotal = 0;
 	private locationProcessed = 0;
@@ -111,7 +112,12 @@ class CityProcessor {
 						this.cities.set(city.id, city);
 					}
 				}
-				this.postStats("STATS_UPDATE");
+				if (this.pendingComplete) {
+					this.pendingComplete = false;
+					this.postStats("COMPLETE");
+				} else {
+					this.postStats("STATS_UPDATE");
+				}
 				break;
 			case "CALCULATE_VIEWPORT_STATS":
 				this.calculateViewportStats(payload.bounds);
@@ -216,10 +222,14 @@ class CityProcessor {
 				await Promise.all(batch.map(([lat, lng]) => this.identifyCity(lat, lng)));
 				this.locationProcessed = Math.min(i + BATCH_SIZE, uniqueLocations.length);
 				this.postProgress();
-				if (this.cities.size > citiesBefore) this.postStats("STATS_UPDATE");
+				if (this.cities.size > citiesBefore) 			this.postStats("STATS_UPDATE");
 			}
 
-			this.postStats("COMPLETE");
+			if (this.visitedCells.size > 0) {
+				this.postStats("COMPLETE");
+			} else {
+				this.pendingComplete = true;
+			}
 		} catch (e) {
 			console.error("City discovery failed in worker:", e);
 			self.postMessage({ type: "ERROR", payload: { message: String(e) } });
