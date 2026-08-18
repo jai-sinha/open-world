@@ -57,5 +57,5 @@ export function computeCityStats(cities: Iterable<City>, visitedCells: Set<numbe
 			});
 		}
 	}
-	return stats.sort((a, b) => b.percentage - a.percentage).slice(0, 10);
+	return stats.sort((a, b) => b.percentage - a.percentage);
 }
