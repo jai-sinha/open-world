@@ -51,6 +51,12 @@ export interface StatsInfo {
 	viewportExplored: number;
 }
 
+export type CityDiscoveryState =
+	| { status: "idle" }
+	| { status: "running"; percentage: number }
+	| { status: "complete" }
+	| { status: "failed" };
+
 interface RouteStyleOptions {
 	lineWidth?: number;
 	lineOpacity?: number;
@@ -87,14 +93,14 @@ interface AppContextValue {
 	routeVisible: boolean;
 	stats: StatsInfo;
 	cityStats: CityStats[];
-	cityDiscoveryProgress: number;
+	cityDiscovery: CityDiscoveryState;
 	selectedActivities: RouteClickFeature[];
 	sidebarOpen: boolean;
 	tilesBaseUrl: string;
 
 	/* ─── actions ─── */
 	initialize: () => Promise<void>;
-	onMapReady: (map: MapLibreMap, hydratedState: HydratedMapState | null) => void;
+	onMapReady: (map: MapLibreMap, hydratedState: HydratedMapState | null) => Promise<void>;
 	authorize: () => void;
 	logout: () => void;
 	fetchAndProcessActivities: () => Promise<void>;
@@ -149,7 +155,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		viewportExplored: 0,
 	});
 	const [cityStats, setCityStats] = useState<CityStats[]>([]);
-	const [cityDiscoveryProgress, setCityDiscoveryProgress] = useState(0);
+	const [cityDiscovery, setCityDiscovery] = useState<CityDiscoveryState>({ status: "idle" });
 	const [selectedActivities, setSelectedActivities] = useState<RouteClickFeature[]>([]);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -171,7 +177,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const allActivitiesRef = useRef<StravaActivity[]>([]);
 	const citiesRef = useRef<City[]>([]);
 	const isProcessingRef = useRef(false);
-	const initializedRef = useRef(false);
+	const initializePromiseRef = useRef<Promise<void> | null>(null);
 	const stravaClientIdRef = useRef<string>("");
 	const handleWorkerMessageRef = useRef<(response: WorkerResponse) => void>(() => {});
 	const handleCityWorkerMessageRef = useRef<(response: CityProcessorResponse) => void>(() => {});
@@ -379,13 +385,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const handleCityWorkerMessage = useCallback((response: CityProcessorResponse) => {
 		switch (response.type) {
 			case "PROGRESS":
-				setCityDiscoveryProgress(response.payload.percentage);
+				setCityDiscovery({ status: "running", percentage: response.payload.percentage });
 				break;
 			case "STATS_UPDATE":
 				setCityStats(response.payload.stats);
 				break;
 			case "COMPLETE":
-				setCityDiscoveryProgress(100);
+				setCityDiscovery({ status: "complete" });
 				setCityStats(response.payload.stats);
 				if (response.payload.cities) {
 					citiesRef.current = response.payload.cities;
@@ -398,6 +404,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				break;
 			case "ERROR":
 				console.error("City worker error:", response.payload.message);
+				setCityDiscovery({ status: "failed" });
 				break;
 		}
 	}, []);
@@ -436,7 +443,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				console.warn("No activity with valid location data found — skipping jumpTo");
 			}
 
-			setCityDiscoveryProgress(0);
+			setCityDiscovery({ status: "running", percentage: 0 });
 			cityWorkerRef.current?.postMessage({
 				type: "DISCOVER_CITIES",
 				payload: {
@@ -546,37 +553,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		updateAuthUI();
 	}, [updateAuthUI]);
 
-	const initialize = useCallback(async () => {
-		if (initializedRef.current) return;
-		initializedRef.current = true;
+	const initialize = useCallback(() => {
+		if (!initializePromiseRef.current) {
+			initializePromiseRef.current = (async () => {
+				try {
+					// Fetch server config
+					const res = await fetch("/api/config");
+					const serverConfig = await res.json();
+					stravaClientIdRef.current = serverConfig.STRAVA_CLIENT_ID;
+					const tilesUrl = serverConfig.TILES_BASE_URL;
+					tilesBaseUrlRef.current = tilesUrl || "";
+					if (tilesUrl) setRoadPMTilesURL(tilesUrl);
 
-		try {
-			// Fetch server config
-			const res = await fetch("/api/config");
-			const serverConfig = await res.json();
-			stravaClientIdRef.current = serverConfig.STRAVA_CLIENT_ID;
-			const tilesUrl = serverConfig.TILES_BASE_URL;
-			tilesBaseUrlRef.current = tilesUrl || "";
-			if (tilesUrl) setRoadPMTilesURL(tilesUrl);
+					stravaClientRef.current = createStravaClient({
+						clientId: stravaClientIdRef.current,
+						redirectUri: window.location.origin,
+					});
 
-			// Create strava client
-			stravaClientRef.current = createStravaClient({
-				clientId: stravaClientIdRef.current,
-				redirectUri: window.location.origin,
-			});
+					const params = new URLSearchParams(window.location.search);
+					const code = params.get("code");
+					const error = params.get("error");
 
-			const params = new URLSearchParams(window.location.search);
-			const code = params.get("code");
-			const error = params.get("error");
-
-			if (code || error) {
-				await handleAuthCallbackInner();
-			} else {
-				updateAuthUI();
-			}
-		} catch (error) {
-			console.error("Failed to initialize:", error);
+					if (code || error) {
+						await handleAuthCallbackInner();
+					} else {
+						updateAuthUI();
+					}
+				} catch (error) {
+					console.error("Failed to initialize:", error);
+				}
+			})();
 		}
+		return initializePromiseRef.current!;
 	}, [handleAuthCallbackInner, updateAuthUI]);
 
 	// ══════════════════════════════════════════════════════════
@@ -723,7 +731,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const onMapReady = useCallback(
-		(map: MapLibreMap, hydratedState: HydratedMapState | null) => {
+		async (map: MapLibreMap, hydratedState: HydratedMapState | null) => {
+			await initialize();
 			mapRef.current = map;
 
 			if (hydratedState?.config) {
@@ -844,7 +853,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 					},
 				});
 				if (hydratedState.activities.length > 0 && citiesRef.current.length === 0) {
-					setCityDiscoveryProgress(0);
+					setCityDiscovery({ status: "running", percentage: 0 });
 					cityWorkerRef.current?.postMessage({
 						type: "DISCOVER_CITIES",
 						payload: {
@@ -865,7 +874,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 				updateStatsUI();
 			}
 		},
-		[handleAuthCallbackInner, sendWorkerMessage, updateStatsUI],
+		[initialize, sendWorkerMessage, updateStatsUI],
 	);
 
 	// ══════════════════════════════════════════════════════════
@@ -940,7 +949,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			}
 
 			explorationLayerRef.current = null;
-			initializedRef.current = false;
+			initializePromiseRef.current = null;
 		};
 	}, []);
 
@@ -961,7 +970,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			routeVisible,
 			stats,
 			cityStats,
-			cityDiscoveryProgress,
+			cityDiscovery,
 			selectedActivities,
 			sidebarOpen,
 			tilesBaseUrl: tilesBaseUrlRef.current,
@@ -994,7 +1003,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			routeVisible,
 			stats,
 			cityStats,
-			cityDiscoveryProgress,
+			cityDiscovery,
 			selectedActivities,
 			sidebarOpen,
 			initialize,

@@ -6,10 +6,10 @@ import type { CityStats as CityStatsItem } from "@/types";
 const PAGE_SIZE = 10;
 
 export default function CityStats() {
-	const { cityStats, cityDiscoveryProgress, jumpToCity } = useApp();
+	const { cityStats, cityDiscovery, jumpToCity } = useApp();
 	const [page, setPage] = useState(0);
 
-	const isDiscovering = cityDiscoveryProgress > 0 && cityDiscoveryProgress < 100;
+	const isDiscovering = cityDiscovery.status === "running";
 	const totalPages = Math.ceil(cityStats.length / PAGE_SIZE);
 	const paged = cityStats.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
@@ -20,14 +20,16 @@ export default function CityStats() {
 				{isDiscovering && (
 					<div className="mb-3">
 						<small className="text-muted d-block mb-1">
-							Processing cities: {Math.round(cityDiscoveryProgress)}%
+							Processing cities: {Math.round(cityDiscovery.percentage)}%
 						</small>
-						<ProgressBar now={cityDiscoveryProgress} animated striped variant="info" />
+						<ProgressBar now={cityDiscovery.percentage} animated striped variant="info" />
 					</div>
 				)}
 
 				{cityStats.length === 0 && !isDiscovering && (
-					<p className="text-muted mb-0">No cities found</p>
+					<p className="text-muted mb-0">
+						{cityDiscovery.status === "failed" ? "City discovery failed" : "No cities found"}
+					</p>
 				)}
 
 				{cityStats.length > 0 && (

@@ -49,7 +49,7 @@ export default function MapView() {
 				"top-right",
 			);
 
-			onMapReady(map, hydratedState);
+			void onMapReady(map, hydratedState);
 		});
 
 		return () => {

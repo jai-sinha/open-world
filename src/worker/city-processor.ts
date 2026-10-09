@@ -100,8 +100,8 @@ class CityProcessor {
 
 		switch (type) {
 			case "DISCOVER_CITIES":
-				await this.initTiles(payload.tilesBaseUrl);
 				this.visitedCells = new Set<number>(payload.visitedCells);
+				await this.initTiles(payload.tilesBaseUrl);
 				this.discoverCitiesFromActivities(payload.activities);
 				break;
 			case "UPDATE_VISITED_CELLS":
